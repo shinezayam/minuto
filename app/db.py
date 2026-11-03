@@ -67,6 +67,10 @@ _engine: Optional[Engine] = None
 _SessionLocal: Optional[sessionmaker] = None
 
 
+def dialect() -> str:
+    return _engine.dialect.name if _engine is not None else ""
+
+
 def normalize_url(url: str) -> str:
     """Render/Heroku-ийн postgres:// хаягийг SQLAlchemy + psycopg3 хэлбэрт оруулна."""
     if url.startswith("postgres://"):

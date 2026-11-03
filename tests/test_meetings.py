@@ -100,3 +100,8 @@ async def test_upload_audio(client: AsyncClient):
     assert data["meeting_id"] == meeting_id
     assert data["status"] == "uploaded"
     assert "filename" in data
+
+
+@pytest.mark.asyncio
+async def test_health_reports_database(client: AsyncClient):
+    assert (await client.get("/api/health")).json()["database"] == "sqlite"

@@ -111,3 +111,5 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
     asr_provider: str
     llm_provider: str = "demo"
+    # "postgresql" | "sqlite" — өгөгдөл сервер дахин эхлэхэд хадгалагдах эсэхийг шалгахад
+    database: str = ""
