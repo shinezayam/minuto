@@ -33,16 +33,20 @@ class WhisperASRProvider:
         """Transcribe audio file using Whisper."""
         try:
             self._load_model()
-            
-            # Transcribe with Mongolian language hint
-            # For better results, use a Mongolian-fine-tuned model
+
+            # Let Whisper auto-detect language first
+            # This works better than forcing language="mn" for small models
             result = self.model.transcribe(
                 audio_path,
-                language="mn",
                 task="transcribe",
-                verbose=False
+                verbose=False,
+                fp16=False  # Use fp32 for CPU
             )
-            
+
+            # Check detected language
+            detected_language = result.get("language", "unknown")
+            print(f"Detected language: {detected_language}")
+
             segments = []
             for i, segment in enumerate(result["segments"]):
                 text = segment["text"].strip()
@@ -56,7 +60,7 @@ class WhisperASRProvider:
                             speaker=None,
                         )
                     )
-            
+
             return segments
         except Exception as e:
             print(f"Whisper transcription failed: {e}")
@@ -220,7 +224,9 @@ Important:
 # Use real Whisper ASR if available, otherwise fall back to mock
 ASR_PROVIDER = os.getenv("ASR_PROVIDER", "whisper")
 if ASR_PROVIDER == "whisper":
-    asr_provider = WhisperASRProvider(model_name=os.getenv("WHISPER_MODEL", "base"))
+    # Use medium model by default for better Mongolian support
+    # For production, consider using a Mongolian-fine-tuned model
+    asr_provider = WhisperASRProvider(model_name=os.getenv("WHISPER_MODEL", "medium"))
 else:
     asr_provider = MockASRProvider()
 
