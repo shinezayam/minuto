@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from pathlib import Path
-from typing import List, Protocol
+from typing import Callable, List, Optional, Protocol
 
 import httpx
 
@@ -20,10 +20,14 @@ class ProviderError(Exception):
     """Гадны AI үйлчилгээ (ASR/LLM) алдаа буцаасан."""
 
 
+# Явцын мэдээлэл: (дууссан хэсэг, нийт хэсэг)
+ProgressCallback = Optional[Callable[[int, int], None]]
+
+
 class ASRProvider(Protocol):
     name: str
 
-    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]: ...
+    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]: ...
 
 
 class MockASRProvider:
@@ -31,7 +35,9 @@ class MockASRProvider:
 
     name = "demo"
 
-    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
+    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]:
+        if on_progress:
+            on_progress(1, 1)
         return [
             TranscriptSegment(
                 id="seg_1",
@@ -58,7 +64,7 @@ class QwenOmniASRProvider:
         if not settings.qwen_api_key:
             raise RuntimeError("ASR_PROVIDER=omni боловч QWEN_API_KEY тохируулаагүй байна")
 
-    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
+    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]:
         src = Path(audio_path)
         parts = await split_to_wav(src, src.parent / "_asr_parts", settings.omni_chunk_sec)
         if not parts:
@@ -66,12 +72,19 @@ class QwenOmniASRProvider:
 
         sem = asyncio.Semaphore(max(1, settings.asr_concurrency))
         chunk_ms = settings.omni_chunk_sec * 1000
+        done = 0
+        if on_progress:
+            on_progress(0, len(parts))
 
         async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
 
             async def one(i: int, part: Path) -> TranscriptSegment:
+                nonlocal done
                 async with sem:
                     text = await self._transcribe_chunk(client, part)
+                done += 1
+                if on_progress:
+                    on_progress(done, len(parts))
                 start = i * chunk_ms
                 return TranscriptSegment(
                     id=f"seg_{i + 1}",
@@ -186,10 +199,15 @@ class WhisperASRProvider:
                 )
         return segments
 
-    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
+    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]:
         try:
+            if on_progress:
+                on_progress(0, 1)
             # Whisper нь CPU-г удаан эзэлдэг тул event loop-ийг блоклохгүйн тулд thread-д ажиллуулна
-            return await asyncio.to_thread(self._transcribe_sync, audio_path)
+            segments = await asyncio.to_thread(self._transcribe_sync, audio_path)
+            if on_progress:
+                on_progress(1, 1)
+            return segments
         except Exception as e:
             # Хуурамч бичвэр рүү чимээгүй шилжихгүй — алдааг хэрэглэгчид харуулна
             raise ProviderError(f"Whisper: {e}") from e

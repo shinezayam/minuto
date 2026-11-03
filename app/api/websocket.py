@@ -10,6 +10,7 @@ from app.config import settings
 from app.models.schemas import WSAck, WSError, WSRecordingReady
 from app.services.audio_ingest import audio_ingest
 from app.services import meeting_store
+from app.services.auth import user_from_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,7 +33,14 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
     """
     await websocket.accept()
 
-    meeting = meeting_store.get_meeting(meeting_id)
+    # Хөтчийн WebSocket header явуулж чаддаггүй тул токенийг ?token=... хэлбэрээр авна
+    user = user_from_token(websocket.query_params.get("token"))
+    if not user:
+        await _send_error(websocket, "UNAUTHORIZED", "Нэвтэрнэ үү")
+        await websocket.close(code=4401)
+        return
+
+    meeting = meeting_store.get_meeting(meeting_id, user.id)
     if not meeting:
         await _send_error(websocket, "MEETING_NOT_FOUND", "Meeting not found")
         await websocket.close(code=4404)

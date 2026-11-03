@@ -36,10 +36,33 @@ class MeetingResponse(BaseModel):
     duration_ms: int = 0
     created_at: datetime
     updated_at: datetime
+    # Ард боловсруулах явц: queued → transcribing (done/total хэсэг) → summarizing → done | failed
+    processing_stage: Optional[str] = None
+    processing_done: int = 0
+    processing_total: int = 0
+    # "CODE: тайлбар" хэлбэртэй (NO_AUDIO, NO_SPEECH, ASR_FAILED, SUMMARY_FAILED, INTERRUPTED, INTERNAL_ERROR)
+    processing_error: Optional[str] = None
 
 
 class MeetingListResponse(BaseModel):
     meetings: List[MeetingResponse]
+
+
+# ---------- Нэвтрэлт ----------
+
+class AuthRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=8, max_length=200)
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserResponse
 
 
 class AudioChunkMeta(BaseModel):

@@ -221,20 +221,24 @@ async def test_qwen_minutes_empty_transcript(qwen_key):
         await llm_mod.QwenLLMProvider().generate_minutes([])
 
 
-@needs_ffmpeg
-async def test_process_endpoint_end_to_end(tmp_path, qwen_key, monkeypatch):
-    """upload → process (Omni + Qwen, mock HTTP) → transcript → minutes → DOCX"""
-    from httpx import ASGITransport, AsyncClient
-    from app.api import meetings as meetings_api
-    from app.main import app
-
-    monkeypatch.setattr(settings, "audio_storage_path", str(tmp_path))
-    monkeypatch.setattr(settings, "omni_chunk_sec", 10)
-    monkeypatch.setattr(meetings_api, "asr_provider", asr_mod.QwenOmniASRProvider())
-    monkeypatch.setattr(meetings_api, "llm_provider", llm_mod.QwenLLMProvider())
-
+async def _upload_tone(client, tmp_path, seconds: int) -> str:
     audio = tmp_path / "in.mp3"
-    _make_tone(audio, 15)
+    _make_tone(audio, seconds)
+    mid = (await client.post("/api/meetings", json={"title": "E2E"})).json()["id"]
+    r = await client.post(f"/api/meetings/{mid}/upload", files={"file": ("in.mp3", audio.read_bytes(), "audio/mpeg")})
+    assert r.status_code == 200, r.text
+    return mid
+
+
+@needs_ffmpeg
+async def test_process_runs_in_background_end_to_end(client, tmp_path, qwen_key, monkeypatch):
+    """upload → process (202, ард нь) → явц → transcript → minutes → DOCX"""
+    from app.services import processing
+
+    monkeypatch.setattr(settings, "omni_chunk_sec", 10)
+    monkeypatch.setattr(asr_mod, "asr_provider", asr_mod.QwenOmniASRProvider())
+    monkeypatch.setattr(llm_mod, "llm_provider", llm_mod.QwenLLMProvider())
+    mid = await _upload_tone(client, tmp_path, 15)
 
     def handler(req):
         body = json.loads(req.content)
@@ -242,35 +246,81 @@ async def test_process_endpoint_end_to_end(tmp_path, qwen_key, monkeypatch):
             return httpx.Response(200, content=_sse("Бат тайлан бэлдэнэ."))
         return _chat({"title": "Тест", "summary": "Товч", "open_questions": [{"text": "Төсөв?"}]})
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        mid = (await client.post("/api/meetings", json={"title": "E2E"})).json()["id"]
-        r = await client.post(f"/api/meetings/{mid}/upload",
-                              files={"file": ("in.mp3", audio.read_bytes(), "audio/mpeg")})
-        assert r.status_code == 200
+    _patch_httpx(monkeypatch, handler)  # app-ийн client-ийг үүсгэсний дараа patch хийнэ
+    r = await client.post(f"/api/meetings/{mid}/process")
+    assert r.status_code == 202 and r.json()["status"] == "processing"
+    assert (await client.get(f"/api/meetings/{mid}")).json()["status"] == "processing"
+    # Давхар эхлүүлэхийг хориглоно
+    assert (await client.post(f"/api/meetings/{mid}/process")).status_code == 409
 
-        _patch_httpx(monkeypatch, handler)  # app-ийн client-ийг үүсгэсний дараа patch хийнэ
-        r = await client.post(f"/api/meetings/{mid}/process")
-        assert r.status_code == 200, r.text
-        assert r.json()["transcript_segments"] == 2
+    await processing.wait_all()
+    m = (await client.get(f"/api/meetings/{mid}")).json()
+    assert m["status"] == "completed", m
+    assert (m["processing_stage"], m["processing_done"], m["processing_total"]) == ("done", 2, 2)
+    assert m["processing_error"] is None
 
-        segs = (await client.get(f"/api/meetings/{mid}/transcript")).json()["segments"]
-        assert segs[0]["text"] == "Бат тайлан бэлдэнэ."
-        minutes = (await client.get(f"/api/meetings/{mid}/minutes")).json()
-        assert minutes["open_questions"][0]["text"] == "Төсөв?"
+    segs = (await client.get(f"/api/meetings/{mid}/transcript")).json()["segments"]
+    assert segs[0]["text"] == "Бат тайлан бэлдэнэ." and len(segs) == 2
+    minutes = (await client.get(f"/api/meetings/{mid}/minutes")).json()
+    assert minutes["open_questions"][0]["text"] == "Төсөв?"
+    docx = await client.get(f"/api/meetings/{mid}/export.docx")
+    assert docx.status_code == 200 and docx.content[:2] == b"PK"
 
-        docx = await client.get(f"/api/meetings/{mid}/export.docx")
-        assert docx.status_code == 200 and docx.content[:2] == b"PK"
+    # Дахин боловсруулж болно
+    assert (await client.post(f"/api/meetings/{mid}/process")).status_code == 202
+    await processing.wait_all()
 
 
-async def test_process_without_audio_returns_400(tmp_path, monkeypatch):
-    from httpx import ASGITransport, AsyncClient
-    from app.main import app
+@needs_ffmpeg
+async def test_summary_failure_keeps_transcript(client, tmp_path, qwen_key, monkeypatch):
+    from app.services import processing
 
-    monkeypatch.setattr(settings, "audio_storage_path", str(tmp_path))
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        mid = (await client.post("/api/meetings", json={"title": "x"})).json()["id"]
-        r = await client.post(f"/api/meetings/{mid}/process")
-        assert r.status_code == 400
+    monkeypatch.setattr(asr_mod, "asr_provider", asr_mod.QwenOmniASRProvider())
+    monkeypatch.setattr(llm_mod, "llm_provider", llm_mod.QwenLLMProvider())
+    mid = await _upload_tone(client, tmp_path, 3)
+
+    def handler(req):
+        if json.loads(req.content).get("stream"):
+            return httpx.Response(200, content=_sse("Сайн байна уу"))
+        return httpx.Response(500, text="boom")
+
+    _patch_httpx(monkeypatch, handler)
+    await client.post(f"/api/meetings/{mid}/process")
+    await processing.wait_all()
+
+    m = (await client.get(f"/api/meetings/{mid}")).json()
+    assert m["status"] == "failed"
+    assert m["processing_error"].startswith("SUMMARY_FAILED")
+    segs = (await client.get(f"/api/meetings/{mid}/transcript")).json()["segments"]
+    assert segs[0]["text"] == "Сайн байна уу"
+
+
+@needs_ffmpeg
+async def test_no_speech_marks_failed(client, tmp_path, qwen_key, monkeypatch):
+    from app.services import processing
+
+    monkeypatch.setattr(asr_mod, "asr_provider", asr_mod.QwenOmniASRProvider())
+    mid = await _upload_tone(client, tmp_path, 3)
+    _patch_httpx(monkeypatch, lambda req: httpx.Response(200, content=_sse("")))
+    await client.post(f"/api/meetings/{mid}/process")
+    await processing.wait_all()
+    assert (await client.get(f"/api/meetings/{mid}")).json()["processing_error"].startswith("NO_SPEECH")
+
+
+async def test_process_without_audio_returns_400(client):
+    mid = (await client.post("/api/meetings", json={"title": "x"})).json()["id"]
+    r = await client.post(f"/api/meetings/{mid}/process")
+    assert r.status_code == 400
+
+
+async def test_interrupted_processing_is_failed_on_restart(client):
+    from app.services import meeting_store
+
+    mid = (await client.post("/api/meetings", json={"title": "x"})).json()["id"]
+    assert meeting_store.try_begin_processing(mid)
+    assert meeting_store.fail_interrupted_processing() == 1
+    m = (await client.get(f"/api/meetings/{mid}")).json()
+    assert m["status"] == "failed" and m["processing_error"].startswith("INTERRUPTED")
 
 
 async def test_qwen_http_error(qwen_key, monkeypatch):

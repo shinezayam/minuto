@@ -1,126 +1,136 @@
 from __future__ import annotations
 
+import asyncio
 import io
+import mimetypes
 import shutil
-from pathlib import Path
-from typing import List
 
-from fastapi import APIRouter, HTTPException, Response, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 
+from app.models.minutes import MeetingMinutes
 from app.models.schemas import (
     MeetingCreate,
     MeetingListResponse,
     MeetingResponse,
     MeetingUpdate,
+    UserResponse,
 )
-from app.models.minutes import MeetingMinutes, TranscriptSegment
-from app.services import meeting_store
-from app.services.asr import ProviderError, asr_provider
+from app.services import meeting_store, processing
 from app.services.audio_utils import find_meeting_audio
-from app.services.llm import llm_provider
+from app.services.auth import current_user
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
+_UPLOAD_EXT = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/mp4": ".m4a",
+    "audio/m4a": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "audio/aac": ".aac",
+    "audio/ogg": ".ogg",
+    "audio/webm": ".webm",
+    "audio/flac": ".flac",
+}
 
-@router.post("", response_model=MeetingResponse, status_code=201)
-def create_meeting(body: MeetingCreate) -> MeetingResponse:
-    return meeting_store.create_meeting(body)
 
-
-@router.get("", response_model=MeetingListResponse)
-def list_meetings() -> MeetingListResponse:
-    return MeetingListResponse(meetings=meeting_store.list_meetings())
-
-
-@router.get("/{meeting_id}", response_model=MeetingResponse)
-def get_meeting(meeting_id: str) -> MeetingResponse:
-    meeting = meeting_store.get_meeting(meeting_id)
+def _owned(meeting_id: str, user: UserResponse) -> MeetingResponse:
+    meeting = meeting_store.get_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
 
 
+@router.post("", response_model=MeetingResponse, status_code=201)
+def create_meeting(body: MeetingCreate, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    return meeting_store.create_meeting(user.id, body)
+
+
+@router.get("", response_model=MeetingListResponse)
+def list_meetings(user: UserResponse = Depends(current_user)) -> MeetingListResponse:
+    return MeetingListResponse(meetings=meeting_store.list_meetings(user.id))
+
+
+@router.get("/{meeting_id}", response_model=MeetingResponse)
+def get_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    return _owned(meeting_id, user)
+
+
 @router.patch("/{meeting_id}", response_model=MeetingResponse)
-def update_meeting(meeting_id: str, body: MeetingUpdate) -> MeetingResponse:
-    meeting = meeting_store.update_meeting(meeting_id, body)
+def update_meeting(meeting_id: str, body: MeetingUpdate, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.update_meeting(meeting_id, user.id, body)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
 
 
 @router.post("/{meeting_id}/start", response_model=MeetingResponse)
-def start_meeting(meeting_id: str) -> MeetingResponse:
-    meeting = meeting_store.start_meeting(meeting_id)
+def start_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.start_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
 
 
 @router.post("/{meeting_id}/pause", response_model=MeetingResponse)
-def pause_meeting(meeting_id: str) -> MeetingResponse:
-    meeting = meeting_store.pause_meeting(meeting_id)
+def pause_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.pause_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found or not recording")
     return meeting
 
 
 @router.post("/{meeting_id}/resume", response_model=MeetingResponse)
-def resume_meeting(meeting_id: str) -> MeetingResponse:
-    meeting = meeting_store.resume_meeting(meeting_id)
+def resume_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.resume_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found or not paused")
     return meeting
 
 
 @router.post("/{meeting_id}/end", response_model=MeetingResponse)
-def end_meeting(meeting_id: str) -> MeetingResponse:
-    meeting = meeting_store.end_meeting(meeting_id)
+def end_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.end_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
 
 
 @router.delete("/{meeting_id}", status_code=204, response_model=None)
-def delete_meeting(meeting_id: str) -> None:
-    if not meeting_store.delete_meeting(meeting_id):
+def delete_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> None:
+    if not meeting_store.delete_meeting(meeting_id, user.id):
         raise HTTPException(status_code=404, detail="Meeting not found")
+    # Хурлыг устгахад аудио бичлэг ч устна
+    shutil.rmtree(processing.meeting_dir(meeting_id), ignore_errors=True)
 
 
 @router.post("/{meeting_id}/upload", status_code=200)
 async def upload_audio(
     meeting_id: str,
     file: UploadFile = File(...),
+    user: UserResponse = Depends(current_user),
 ) -> dict:
-    """Upload an audio file for a meeting."""
-    meeting = meeting_store.get_meeting(meeting_id)
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
+    _owned(meeting_id, user)
 
-    if not file.content_type or not file.content_type.startswith("audio/"):
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if not content_type.startswith("audio/") and not content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="File must be an audio file")
 
-    # Save the uploaded file
-    from app.config import settings
-    meeting_dir = Path(settings.audio_storage_path) / meeting_id
+    meeting_dir = processing.meeting_dir(meeting_id)
     meeting_dir.mkdir(parents=True, exist_ok=True)
+    for old in meeting_dir.glob("uploaded*"):
+        old.unlink()
+    filepath = meeting_dir / f"uploaded{_UPLOAD_EXT.get(content_type, '.bin')}"
 
-    # Determine extension from content type
-    ext = ".webm"
-    if file.content_type == "audio/mpeg":
-        ext = ".mp3"
-    elif file.content_type == "audio/wav":
-        ext = ".wav"
-    elif file.content_type == "audio/mp4" or file.content_type == "audio/m4a":
-        ext = ".m4a"
-    elif file.content_type == "audio/ogg":
-        ext = ".ogg"
+    def _save() -> None:
+        with open(filepath, "wb") as f:
+            shutil.copyfileobj(file.file, f)
 
-    filepath = meeting_dir / f"uploaded{ext}"
-
-    with open(filepath, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
+    await asyncio.to_thread(_save)
     return {
         "meeting_id": meeting_id,
         "filename": filepath.name,
@@ -129,137 +139,64 @@ async def upload_audio(
     }
 
 
-@router.post("/{meeting_id}/process")
-async def process_meeting(meeting_id: str) -> dict:
-    """Process uploaded audio: transcribe and generate meeting minutes."""
-    meeting = meeting_store.get_meeting(meeting_id)
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
-    # Upload хийсэн файл, эсвэл шууд бичлэгийн хэсгүүдийг нийлүүлсэн файл
-    from app.config import settings
-    meeting_dir = Path(settings.audio_storage_path) / meeting_id
-    audio_file = find_meeting_audio(meeting_dir)
-
-    if not audio_file:
-        raise HTTPException(status_code=400, detail="No audio file found. Please upload audio first.")
-
-    try:
-        transcript = await asr_provider.transcribe(str(audio_file))
-    except ProviderError as e:
-        raise HTTPException(status_code=502, detail=f"ASR_FAILED: {e}") from e
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"ASR_FAILED: {e}") from e
-
-    # Бичвэрийг тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр алга болохгүй
-    meeting_store.update_meeting_transcript(meeting_id, [seg.model_dump() for seg in transcript])
-
-    if not transcript:
-        raise HTTPException(status_code=422, detail="NO_SPEECH: Бичлэгээс яриа танигдсангүй")
-
-    try:
-        minutes = await llm_provider.generate_minutes(transcript)
-    except ProviderError as e:
-        raise HTTPException(status_code=502, detail=f"SUMMARY_FAILED: {e}") from e
-
-    meeting_store.update_meeting_minutes(meeting_id, minutes.model_dump())
-
-    return {
-        "meeting_id": meeting_id,
-        "status": "processed",
-        "transcript_segments": len(transcript),
-        "asr_provider": asr_provider.name,
-        "llm_provider": llm_provider.name,
-    }
+@router.post("/{meeting_id}/process", status_code=202)
+async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    """
+    Боловсруулалтыг ард нь эхлүүлээд шууд хариу өгнө.
+    Явцыг GET /api/meetings/{id} (processing_stage, processing_done/total, processing_error)-ээр харна.
+    """
+    _owned(meeting_id, user)
+    if not processing.has_audio(meeting_id):
+        raise HTTPException(status_code=400, detail="NO_AUDIO: No audio file found. Please upload audio first.")
+    if not meeting_store.try_begin_processing(meeting_id):
+        raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Энэ хурлыг боловсруулж байна")
+    processing.start(meeting_id)
+    return {"meeting_id": meeting_id, "status": "processing"}
 
 
 @router.get("/{meeting_id}/transcript")
-async def get_transcript(meeting_id: str) -> dict:
-    """Get the transcript for a meeting."""
-    meeting = meeting_store.get_meeting(meeting_id)
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
-    transcript = meeting_store.get_meeting_transcript(meeting_id)
-    return {"meeting_id": meeting_id, "segments": transcript}
+def get_transcript(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    _owned(meeting_id, user)
+    return {"meeting_id": meeting_id, "segments": meeting_store.get_meeting_transcript(meeting_id)}
 
 
 @router.get("/{meeting_id}/minutes")
-async def get_minutes(meeting_id: str) -> MeetingMinutes:
-    """Get the meeting minutes."""
-    meeting = meeting_store.get_meeting(meeting_id)
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
+def get_minutes(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingMinutes:
+    _owned(meeting_id, user)
     minutes = meeting_store.get_meeting_minutes(meeting_id)
     if not minutes:
         raise HTTPException(status_code=404, detail="Minutes not generated yet. Process the meeting first.")
-
     return MeetingMinutes(**minutes)
 
 
 @router.get("/{meeting_id}/audio")
-async def get_audio(meeting_id: str):
-    """Serve the audio file for a meeting."""
-    meeting = meeting_store.get_meeting(meeting_id)
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
-    # Find the audio file (uploaded or recorded)
-    from app.config import settings
-    meeting_dir = Path(settings.audio_storage_path) / meeting_id
-
-    # Check for uploaded file first
-    uploaded_files = list(meeting_dir.glob("uploaded*"))
-    if uploaded_files:
-        return FileResponse(
-            uploaded_files[0],
-            media_type="audio/mpeg",
-            filename=f"meeting_{meeting_id}.mp3"
-        )
-
-    # Check for recorded chunks (concatenate them)
-    chunk_files = sorted(meeting_dir.glob("*.webm"))
-    if chunk_files:
-        # For now, just return the first chunk as a sample
-        # In production, you'd concatenate all chunks
-        return FileResponse(
-            chunk_files[0],
-            media_type="audio/webm",
-            filename=f"meeting_{meeting_id}.webm"
-        )
-
-    raise HTTPException(status_code=404, detail="No audio file found")
+async def get_audio(meeting_id: str, user: UserResponse = Depends(current_user)):
+    _owned(meeting_id, user)
+    audio = await asyncio.to_thread(find_meeting_audio, processing.meeting_dir(meeting_id))
+    if not audio:
+        raise HTTPException(status_code=404, detail="No audio file found")
+    media_type = mimetypes.guess_type(audio.name)[0] or ("audio/webm" if audio.suffix == ".webm" else "application/octet-stream")
+    return FileResponse(audio, media_type=media_type, filename=f"meeting_{meeting_id}{audio.suffix}")
 
 
 @router.get("/{meeting_id}/export.docx")
-async def export_docx(meeting_id: str):
-    """Export meeting minutes as DOCX."""
-    meeting = meeting_store.get_meeting(meeting_id)
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
+def export_docx(meeting_id: str, user: UserResponse = Depends(current_user)):
+    meeting = _owned(meeting_id, user)
     minutes_data = meeting_store.get_meeting_minutes(meeting_id)
     if not minutes_data:
         raise HTTPException(status_code=404, detail="Minutes not generated yet")
 
-    transcript = meeting_store.get_meeting_transcript(meeting_id)
-
-    from app.models.minutes import MeetingMinutes
     from app.services.export_docx import generate_meeting_docx
 
-    minutes = MeetingMinutes(**minutes_data)
     docx_bytes = generate_meeting_docx(
         meeting_id=meeting_id,
         title=meeting.title,
         created_at=str(meeting.created_at),
-        minutes=minutes,
-        transcript=transcript,
+        minutes=MeetingMinutes(**minutes_data),
+        transcript=meeting_store.get_meeting_transcript(meeting_id),
     )
-
-    from fastapi.responses import StreamingResponse
     return StreamingResponse(
         io.BytesIO(docx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename=meeting_{meeting_id}.docx"}
+        headers={"Content-Disposition": f"attachment; filename=meeting_{meeting_id}.docx"},
     )

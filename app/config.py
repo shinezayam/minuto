@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # ffmpeg-ийн зам. Хоосон бол PATH, дараа нь imageio-ffmpeg-ээс хайна.
     ffmpeg_path: str = ""
 
+    # Нэвтрэлт: JWT гарын үсгийн нууц. Хоосон бол сервер эхлэх бүрт шинээр үүснэ (бүгд дахин нэвтэрнэ).
+    jwt_secret: str = ""
+    jwt_ttl_days: int = 30
+    allow_registration: bool = True
+
     cors_origins: str = "http://localhost:3000"
     max_audio_chunk_bytes: int = 5_000_000
     audio_storage_path: str = "./audio_storage"

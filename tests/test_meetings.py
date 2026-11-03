@@ -1,18 +1,9 @@
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-from app.main import app
-from app.models.schemas import MeetingCreate, MeetingStatus
-
-
-@pytest_asyncio.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+# `client` fixture (нэвтэрсэн хэрэглэгч) tests/conftest.py-д байна
 
 
 @pytest.mark.asyncio

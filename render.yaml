@@ -24,7 +24,22 @@ services:
       # Нууц — Render dashboard дээр гараар оруулна, git-д бичихгүй
       - key: QWEN_API_KEY
         sync: false
+      # Хурал, хэрэглэгчийн мэдээлэл — доорх Postgres-д хадгалагдана
+      - key: DATABASE_URL
+        fromDatabase:
+          name: minuto-db
+          property: connectionString
+      # Нэвтрэлтийн токены нууц — Render нэг удаа санамсаргүйгээр үүсгэнэ
+      - key: JWT_SECRET
+        generateValue: true
       - key: AUDIO_STORAGE_PATH
         value: ./audio_storage
       - key: MAX_AUDIO_CHUNK_BYTES
         value: 5000000
+
+databases:
+  # Render-ийн үнэгүй Postgres 30 хоногийн дараа дуусдаг — жинхэнэ хэрэглээнд төлбөртэй багц эсвэл өөр сервер
+  - name: minuto-db
+    plan: free
+    databaseName: minuto
+    user: minuto

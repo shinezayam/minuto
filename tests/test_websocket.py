@@ -7,20 +7,37 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import settings
 from app.main import app
 from app.services.audio_utils import ffmpeg_exe, find_meeting_audio, split_to_wav
 
 from tests.test_providers import needs_ffmpeg
 
 
+class _AuthedClient:
+    """TestClient + токен: REST хүсэлтэд header, WebSocket-д ?token= нэмнэ."""
+
+    def __init__(self, tc: TestClient, token: str):
+        self.tc, self.token = tc, token
+        tc.headers["Authorization"] = f"Bearer {token}"
+
+    def post(self, *a, **kw):
+        return self.tc.post(*a, **kw)
+
+    def websocket_connect(self, path: str, token: str | None = "default"):
+        tok = self.token if token == "default" else token
+        return self.tc.websocket_connect(path + (f"?token={tok}" if tok else ""))
+
+
+def _signup(tc: TestClient, email: str) -> str:
+    r = tc.post("/api/auth/register", json={"email": email, "password": "password123"})
+    assert r.status_code == 201, r.text
+    return r.json()["token"]
+
+
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "audio_storage_path", str(tmp_path))
-    from app.services.audio_ingest import audio_ingest
-    monkeypatch.setattr(audio_ingest, "_storage_root", tmp_path)
-    with TestClient(app) as c:
-        yield c
+def client(isolated_env):
+    with TestClient(app) as tc:
+        yield _AuthedClient(tc, _signup(tc, "ws@test.mn"))
 
 
 def _meeting(client) -> str:
@@ -31,7 +48,7 @@ def _meta(seq: int) -> str:
     return json.dumps({"type": "audio.chunk", "sequence": seq, "mime_type": "audio/webm;codecs=opus", "timestamp_ms": seq * 3000})
 
 
-def test_chunks_are_acked_and_stored(client, tmp_path):
+def test_chunks_are_acked_and_stored(client, isolated_env):
     mid = _meeting(client)
     with client.websocket_connect(f"/ws/meetings/{mid}/audio") as ws:
         assert ws.receive_json()["type"] == "recording.ready"
@@ -41,11 +58,11 @@ def test_chunks_are_acked_and_stored(client, tmp_path):
             ack = ws.receive_json()
             assert ack == {"type": "audio.ack", "sequence": seq, "meeting_id": mid}
 
-    files = sorted(p.name for p in (tmp_path / mid).iterdir())
+    files = sorted(p.name for p in (isolated_env / mid).iterdir())
     assert files == ["000000.webm", "000001.webm", "000002.webm"]
 
 
-def test_resend_after_reconnect_is_idempotent(client, tmp_path):
+def test_resend_after_reconnect_is_idempotent(client, isolated_env):
     mid = _meeting(client)
     for _ in range(2):  # ижил хэсгийг хоёр холболтоор илгээнэ
         with client.websocket_connect(f"/ws/meetings/{mid}/audio") as ws:
@@ -53,7 +70,7 @@ def test_resend_after_reconnect_is_idempotent(client, tmp_path):
             ws.send_text(_meta(0))
             ws.send_bytes(b"abc")
             assert ws.receive_json()["sequence"] == 0
-    assert (tmp_path / mid / "000000.webm").read_bytes() == b"abc"
+    assert (isolated_env / mid / "000000.webm").read_bytes() == b"abc"
 
 
 def test_protocol_errors_do_not_kill_connection(client):
@@ -73,6 +90,20 @@ def test_protocol_errors_do_not_kill_connection(client):
 
 def test_unknown_meeting_rejected(client):
     with client.websocket_connect("/ws/meetings/nope/audio") as ws:
+        assert ws.receive_json()["code"] == "MEETING_NOT_FOUND"
+
+
+def test_websocket_requires_token(client):
+    mid = _meeting(client)
+    for token in (None, "garbage"):
+        with client.websocket_connect(f"/ws/meetings/{mid}/audio", token=token) as ws:
+            assert ws.receive_json()["code"] == "UNAUTHORIZED"
+
+
+def test_websocket_rejects_other_users_meeting(client):
+    mid = _meeting(client)
+    other = _signup(client.tc, "other@test.mn")
+    with client.websocket_connect(f"/ws/meetings/{mid}/audio", token=other) as ws:
         assert ws.receive_json()["code"] == "MEETING_NOT_FOUND"
 
 
