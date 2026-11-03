@@ -128,6 +128,38 @@ def get_meeting_raw(meeting_id: str) -> Optional[dict]:
     return _meetings.get(meeting_id)
 
 
+def update_meeting_transcript(meeting_id: str, transcript: list) -> None:
+    """Store transcript segments for a meeting."""
+    meeting = _meetings.get(meeting_id)
+    if meeting:
+        meeting["transcript"] = transcript
+        meeting["updated_at"] = _now()
+
+
+def get_meeting_transcript(meeting_id: str) -> list:
+    """Get transcript segments for a meeting."""
+    meeting = _meetings.get(meeting_id)
+    if meeting:
+        return meeting.get("transcript", [])
+    return []
+
+
+def update_meeting_minutes(meeting_id: str, minutes: dict) -> None:
+    """Store meeting minutes."""
+    meeting = _meetings.get(meeting_id)
+    if meeting:
+        meeting["minutes"] = minutes
+        meeting["updated_at"] = _now()
+
+
+def get_meeting_minutes(meeting_id: str) -> Optional[dict]:
+    """Get meeting minutes."""
+    meeting = _meetings.get(meeting_id)
+    if meeting:
+        return meeting.get("minutes")
+    return None
+
+
 def _to_response(meeting: dict) -> MeetingResponse:
     return MeetingResponse(
         id=meeting["id"],
