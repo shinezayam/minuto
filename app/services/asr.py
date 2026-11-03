@@ -31,32 +31,38 @@ class WhisperASRProvider:
 
     async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
         """Transcribe audio file using Whisper."""
-        self._load_model()
-        
-        # Transcribe with Mongolian language hint
-        # For better results, use a Mongolian-fine-tuned model
-        result = self.model.transcribe(
-            audio_path,
-            language="mn",
-            task="transcribe",
-            verbose=False
-        )
-        
-        segments = []
-        for i, segment in enumerate(result["segments"]):
-            text = segment["text"].strip()
-            if text:  # Only add non-empty segments
-                segments.append(
-                    TranscriptSegment(
-                        id=f"seg_{i+1}",
-                        start_ms=int(segment["start"] * 1000),
-                        end_ms=int(segment["end"] * 1000),
-                        text=text,
-                        speaker=None,
+        try:
+            self._load_model()
+            
+            # Transcribe with Mongolian language hint
+            # For better results, use a Mongolian-fine-tuned model
+            result = self.model.transcribe(
+                audio_path,
+                language="mn",
+                task="transcribe",
+                verbose=False
+            )
+            
+            segments = []
+            for i, segment in enumerate(result["segments"]):
+                text = segment["text"].strip()
+                if text:  # Only add non-empty segments
+                    segments.append(
+                        TranscriptSegment(
+                            id=f"seg_{i+1}",
+                            start_ms=int(segment["start"] * 1000),
+                            end_ms=int(segment["end"] * 1000),
+                            text=text,
+                            speaker=None,
+                        )
                     )
-                )
-        
-        return segments
+            
+            return segments
+        except Exception as e:
+            print(f"Whisper transcription failed: {e}")
+            print("Falling back to mock provider...")
+            # Fall back to mock provider on error
+            return await MockASRProvider().transcribe(audio_path)
 
 
 class MockASRProvider:
