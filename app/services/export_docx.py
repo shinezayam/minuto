@@ -101,6 +101,12 @@ def generate_meeting_docx(
             row_cells[2].text = item.owner or "-"
             row_cells[3].text = item.due_date or "-"
 
+    # Open questions
+    if minutes.open_questions:
+        doc.add_heading("Нээлттэй асуудлууд", level=1)
+        for q in minutes.open_questions:
+            doc.add_paragraph(q.text, style="List Bullet")
+
     # Transcript appendix
     if transcript:
         doc.add_page_break()

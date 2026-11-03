@@ -9,3 +9,7 @@ httpx==0.28.1
 pytest==8.4.1
 pytest-asyncio==1.0.0
 python-docx==1.2.0
+imageio-ffmpeg==0.5.1
+# Optional: uncomment for local Whisper ASR (requires ~2GB torch)
+# openai-whisper
+# setuptools

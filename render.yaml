@@ -10,10 +10,20 @@ services:
         value: 3.11.12
       - key: CORS_ORIGINS
         value: https://mongolian-ai-minutes.vercel.app,http://localhost:3000
+      # omni = Qwen-Omni API (free plan-ий 512MB RAM-д багтана). whisper medium-д 2GB+ RAM хэрэгтэй.
       - key: ASR_PROVIDER
-        value: demo
+        value: omni
       - key: LLM_PROVIDER
-        value: demo
+        value: qwen
+      - key: QWEN_BASE_URL
+        value: https://ali.gerege.mn/v1
+      - key: QWEN_MODEL
+        value: qwen3.7-plus
+      - key: OMNI_MODEL
+        value: qwen3.8-omni-flash
+      # Нууц — Render dashboard дээр гараар оруулна, git-д бичихгүй
+      - key: QWEN_API_KEY
+        sync: false
       - key: AUDIO_STORAGE_PATH
         value: ./audio_storage
       - key: MAX_AUDIO_CHUNK_BYTES

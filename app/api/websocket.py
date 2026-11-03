@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -18,79 +18,97 @@ router = APIRouter()
 _active_connections: Dict[str, Set[WebSocket]] = {}
 
 
+async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
+    await websocket.send_json(WSError(code=code, message=message).model_dump())
+
+
 @router.websocket("/ws/meetings/{meeting_id}/audio")
 async def audio_websocket(websocket: WebSocket, meeting_id: str):
+    """
+    Протокол: хэсэг бүрд эхлээд JSON meta
+      {"type": "audio.chunk", "sequence": N, "mime_type": "...", "timestamp_ms": T}
+    дараа нь шууд binary аудио. Хадгалсны дараа {"type": "audio.ack", "sequence": N} буцаана.
+    Ижил sequence дахин ирвэл (дахин холбогдсоны дараа) дарж бичээд дахин ack өгнө.
+    """
     await websocket.accept()
 
     meeting = meeting_store.get_meeting(meeting_id)
     if not meeting:
-        await websocket.send_json(
-            WSError(code="MEETING_NOT_FOUND", message="Meeting not found").model_dump()
-        )
+        await _send_error(websocket, "MEETING_NOT_FOUND", "Meeting not found")
         await websocket.close(code=4404)
         return
 
-    if meeting_id not in _active_connections:
-        _active_connections[meeting_id] = set()
-    _active_connections[meeting_id].add(websocket)
+    _active_connections.setdefault(meeting_id, set()).add(websocket)
+    pending_meta: Optional[dict] = None
 
     try:
-        await websocket.send_json(
-            WSRecordingReady(meeting_id=meeting_id).model_dump()
-        )
+        await websocket.send_json(WSRecordingReady(meeting_id=meeting_id).model_dump())
 
         while True:
-            try:
-                message = await websocket.receive()
-            except RuntimeError as e:
-                if "disconnect" in str(e).lower():
-                    break
-                raise
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
 
-            if "text" in message and message["text"]:
-                meta = json.loads(message["text"])
-                msg_type = meta.get("type")
+            text = message.get("text")
+            data = message.get("bytes")
 
-                if msg_type == "audio.chunk":
-                    binary_data = await websocket.receive_bytes()
-                    try:
-                        result = await audio_ingest.accept_chunk(
-                            meeting_id=meeting_id,
-                            sequence=meta["sequence"],
-                            mime_type=meta.get("mime_type", "audio/webm"),
-                            timestamp_ms=meta.get("timestamp_ms", 0),
-                            data=binary_data,
-                        )
-                        ack = WSAck(
-                            sequence=meta["sequence"],
-                            meeting_id=meeting_id,
-                        )
-                        await websocket.send_json(ack.model_dump())
-                    except ValueError as e:
-                        err = WSError(code="CHUNK_REJECTED", message=str(e))
-                        await websocket.send_json(err.model_dump())
-
-            elif "bytes" in message and message["bytes"]:
-                binary_data = message["bytes"]
-                if len(binary_data) > settings.max_audio_chunk_bytes:
-                    err = WSError(
-                        code="CHUNK_TOO_LARGE",
-                        message=f"Max size: {settings.max_audio_chunk_bytes} bytes",
-                    )
-                    await websocket.send_json(err.model_dump())
+            if text is not None:
+                try:
+                    meta = json.loads(text)
+                except json.JSONDecodeError:
+                    await _send_error(websocket, "BAD_MESSAGE", "Invalid JSON")
                     continue
 
+                if meta.get("type") != "audio.chunk":
+                    continue  # одоогоор өөр төрлийн мессеж хүлээж авахгүй
+                if not isinstance(meta.get("sequence"), int) or meta["sequence"] < 0:
+                    await _send_error(websocket, "BAD_MESSAGE", "sequence must be a non-negative integer")
+                    continue
+                if pending_meta is not None:
+                    # Өмнөх meta-гийн аудио ирээгүй — тэр хэсгийг алгасаж, клиент ack авахгүй тул дахин илгээнэ
+                    logger.warning("meeting %s: chunk %s had no audio payload", meeting_id, pending_meta["sequence"])
+                pending_meta = meta
+                continue
+
+            if data is not None:
+                if pending_meta is None:
+                    await _send_error(websocket, "CHUNK_WITHOUT_META", "Audio received without preceding metadata")
+                    continue
+                meta, pending_meta = pending_meta, None
+
+                if len(data) > settings.max_audio_chunk_bytes:
+                    await _send_error(
+                        websocket, "CHUNK_TOO_LARGE", f"Max size: {settings.max_audio_chunk_bytes} bytes"
+                    )
+                    continue
+                try:
+                    await audio_ingest.accept_chunk(
+                        meeting_id=meeting_id,
+                        sequence=meta["sequence"],
+                        mime_type=meta.get("mime_type") or "audio/webm",
+                        timestamp_ms=int(meta.get("timestamp_ms") or 0),
+                        data=data,
+                    )
+                except ValueError as e:
+                    await _send_error(websocket, "CHUNK_REJECTED", str(e))
+                    continue
+
+                await websocket.send_json(
+                    WSAck(sequence=meta["sequence"], meeting_id=meeting_id).model_dump()
+                )
+
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for meeting {meeting_id}")
-    except Exception as e:
-        logger.error(f"WebSocket error for meeting {meeting_id}: {e}")
+        pass
+    except Exception:
+        logger.exception("WebSocket error for meeting %s", meeting_id)
         try:
-            err = WSError(code="INTERNAL_ERROR", message="Server error")
-            await websocket.send_json(err.model_dump())
+            await _send_error(websocket, "INTERNAL_ERROR", "Server error")
         except Exception:
             pass
     finally:
-        if meeting_id in _active_connections:
-            _active_connections[meeting_id].discard(websocket)
-            if not _active_connections[meeting_id]:
+        logger.info("WebSocket closed for meeting %s", meeting_id)
+        conns = _active_connections.get(meeting_id)
+        if conns is not None:
+            conns.discard(websocket)
+            if not conns:
                 del _active_connections[meeting_id]

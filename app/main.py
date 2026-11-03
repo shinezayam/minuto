@@ -37,4 +37,5 @@ async def health() -> HealthResponse:
         status="ok",
         version="0.1.0",
         asr_provider=settings.asr_provider,
+        llm_provider=settings.llm_provider,
     )
