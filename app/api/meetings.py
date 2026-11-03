@@ -129,18 +129,55 @@ async def upload_audio(
 
 @router.post("/{meeting_id}/process")
 async def process_meeting(meeting_id: str) -> dict:
-    """Process uploaded audio: transcribe and generate meeting minutes."""
+    """Process audio: transcribe and generate meeting minutes."""
     meeting = meeting_store.get_meeting(meeting_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    # Find the uploaded audio file
+    # Find audio files
     from app.config import settings
     meeting_dir = Path(settings.audio_storage_path) / meeting_id
+    
+    # First check for uploaded files
     audio_files = list(meeting_dir.glob("uploaded*"))
-
+    
     if not audio_files:
-        raise HTTPException(status_code=400, detail="No audio file found. Please upload audio first.")
+        # Check for live recording chunks
+        chunk_files = sorted(meeting_dir.glob("*.webm"))
+        if not chunk_files:
+            chunk_files = sorted(meeting_dir.glob("*.bin"))
+        
+        if chunk_files:
+            # Concatenate chunks into a single file
+            import subprocess
+            concat_path = meeting_dir / "concatenated.webm"
+            
+            # Create file list for ffmpeg
+            list_file = meeting_dir / "filelist.txt"
+            with open(list_file, 'w') as f:
+                for chunk in chunk_files:
+                    # Use absolute path to avoid ffmpeg path resolution issues
+                    f.write(f"file '{chunk.absolute()}'\n")
+            
+            # Concatenate using ffmpeg
+            try:
+                subprocess.run([
+                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                    '-i', str(list_file),
+                    '-c', 'copy',
+                    str(concat_path),
+                    '-y'
+                ], check=True, capture_output=True)
+                
+                audio_files = [concat_path]
+                list_file.unlink()  # Clean up
+            except subprocess.CalledProcessError as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to concatenate audio chunks: {e.stderr.decode()}"
+                )
+        else:
+            raise HTTPException(status_code=400, detail="No audio file found. Please upload audio or record a meeting first.")
 
     audio_path = str(audio_files[0])
 
