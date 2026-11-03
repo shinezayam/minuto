@@ -9,3 +9,8 @@ httpx==0.28.1
 pytest==8.4.1
 pytest-asyncio==1.0.0
 python-docx==1.2.0
+# ffmpeg суугаагүй орчинд (Render native python) static ffmpeg binary өгнө
+imageio-ffmpeg==0.8.0
+# ASR_PROVIDER=whisper үед л хэрэгтэй (torch татдаг тул том)
+openai-whisper
+setuptools

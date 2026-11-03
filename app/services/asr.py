@@ -147,9 +147,59 @@ class _ClientError(Exception):
     pass
 
 
+class WhisperASRProvider:
+    """
+    Локал OpenAI Whisper (zzzchinguun-ийн хувилбар). Сервер дээр ажилладаг тул гадны API хэрэггүй,
+    гэхдээ `medium` загварт ~2-5GB RAM хэрэгтэй, CPU дээр удаан. `pip install openai-whisper`.
+    Монгол хэлэнд fine-tune хийсэн загварыг WHISPER_MODEL-оор зааж болно.
+    """
+
+    name = "whisper"
+
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self.model = None
+
+    def _load_model(self):
+        if self.model is None:
+            import whisper
+
+            logger.info("Loading Whisper model: %s", self.model_name)
+            self.model = whisper.load_model(self.model_name)
+            logger.info("Whisper model loaded on %s", self.model.device)
+        return self.model
+
+    def _transcribe_sync(self, audio_path: str) -> List[TranscriptSegment]:
+        result = self._load_model().transcribe(audio_path, task="transcribe", verbose=False, fp16=False)
+        logger.info("Whisper detected language: %s", result.get("language", "unknown"))
+        segments = []
+        for i, seg in enumerate(result["segments"]):
+            text = seg["text"].strip()
+            if text:
+                segments.append(
+                    TranscriptSegment(
+                        id=f"seg_{i + 1}",
+                        start_ms=int(seg["start"] * 1000),
+                        end_ms=int(seg["end"] * 1000),
+                        text=text,
+                    )
+                )
+        return segments
+
+    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
+        try:
+            # Whisper нь CPU-г удаан эзэлдэг тул event loop-ийг блоклохгүйн тулд thread-д ажиллуулна
+            return await asyncio.to_thread(self._transcribe_sync, audio_path)
+        except Exception as e:
+            # Хуурамч бичвэр рүү чимээгүй шилжихгүй — алдааг хэрэглэгчид харуулна
+            raise ProviderError(f"Whisper: {e}") from e
+
+
 def make_asr_provider() -> ASRProvider:
     if settings.asr_provider == "omni":
         return QwenOmniASRProvider()
+    if settings.asr_provider == "whisper":
+        return WhisperASRProvider(settings.whisper_model)
     if settings.asr_provider != "demo":
         raise RuntimeError(f"Тодорхойгүй ASR_PROVIDER: {settings.asr_provider}")
     return MockASRProvider()

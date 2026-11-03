@@ -137,6 +137,34 @@ def test_omni_requires_key(monkeypatch):
         asr_mod.QwenOmniASRProvider()
 
 
+# ---------- Whisper (локал) ----------
+
+def _fake_whisper(monkeypatch, transcribe):
+    import sys
+    import types
+
+    model = types.SimpleNamespace(device="cpu", transcribe=transcribe)
+    monkeypatch.setitem(sys.modules, "whisper", types.SimpleNamespace(load_model=lambda name: model))
+
+
+async def test_whisper_segments(monkeypatch):
+    _fake_whisper(monkeypatch, lambda path, **kw: {
+        "language": "mn",
+        "segments": [{"start": 0.0, "end": 2.5, "text": " Сайн байна уу "}, {"start": 2.5, "end": 3.0, "text": "  "}],
+    })
+    segs = await asr_mod.WhisperASRProvider("tiny").transcribe("x.wav")
+    assert [(s.id, s.start_ms, s.end_ms, s.text) for s in segs] == [("seg_1", 0, 2500, "Сайн байна уу")]
+
+
+async def test_whisper_failure_is_not_hidden(monkeypatch):
+    def boom(path, **kw):
+        raise MemoryError("out of memory")
+
+    _fake_whisper(monkeypatch, boom)
+    with pytest.raises(asr_mod.ProviderError, match="Whisper"):
+        await asr_mod.WhisperASRProvider("medium").transcribe("x.wav")
+
+
 # ---------- Qwen LLM ----------
 
 TRANSCRIPT = [

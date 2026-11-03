@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_audio_bucket: str = "meeting-audio-private"
 
-    # ASR: "omni" (Qwen-Omni) | "demo" (тодорхой шошготой хуурамч бичвэр)
+    # ASR: "omni" (Qwen-Omni API) | "whisper" (локал Whisper) | "demo" (тодорхой шошготой хуурамч бичвэр)
     asr_provider: str = "demo"
     asr_model_id: str = ""
     asr_device: str = "auto"
@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     omni_model: str = "qwen3-omni-flash"
     omni_chunk_sec: int = 30
     asr_concurrency: int = 4
+    # ASR_PROVIDER=whisper үед
+    whisper_model: str = "medium"
 
     # LLM (хурлын тэмдэглэл): "qwen" | "demo"
     llm_provider: str = "demo"
