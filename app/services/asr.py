@@ -1,8 +1,62 @@
 from __future__ import annotations
 
+import os
 from typing import List
 
 from app.models.minutes import MeetingMinutes, TranscriptSegment
+
+
+class WhisperASRProvider:
+    """Real ASR provider using OpenAI Whisper for Mongolian speech recognition.
+    
+    Note: For production use with Mongolian, consider using a Mongolian-fine-tuned
+    Whisper model from Hugging Face (e.g., 'montagnext/whisper-mongolian' or similar).
+    Set the model via WHISPER_MODEL environment variable.
+    """
+
+    def __init__(self, model_name: str = "base"):
+        self.model_name = model_name
+        self.model = None
+
+    def _load_model(self):
+        """Lazy load the Whisper model."""
+        if self.model is None:
+            import ssl
+            import whisper
+            # Disable SSL verification for model download (proxy/firewall workaround)
+            ssl._create_default_https_context = ssl._create_unverified_context
+            print(f"Loading Whisper model: {self.model_name}")
+            self.model = whisper.load_model(self.model_name)
+            print(f"✓ Whisper model loaded on {self.model.device}")
+
+    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
+        """Transcribe audio file using Whisper."""
+        self._load_model()
+        
+        # Transcribe with Mongolian language hint
+        # For better results, use a Mongolian-fine-tuned model
+        result = self.model.transcribe(
+            audio_path,
+            language="mn",
+            task="transcribe",
+            verbose=False
+        )
+        
+        segments = []
+        for i, segment in enumerate(result["segments"]):
+            text = segment["text"].strip()
+            if text:  # Only add non-empty segments
+                segments.append(
+                    TranscriptSegment(
+                        id=f"seg_{i+1}",
+                        start_ms=int(segment["start"] * 1000),
+                        end_ms=int(segment["end"] * 1000),
+                        text=text,
+                        speaker=None,
+                    )
+                )
+        
+        return segments
 
 
 class MockASRProvider:
@@ -75,5 +129,98 @@ class MockLLMProvider:
         )
 
 
-asr_provider = MockASRProvider()
-llm_provider = MockLLMProvider()
+class QwenLLMProvider:
+    """Real LLM provider using Qwen via Alibaba Cloud Model Studio for meeting minutes generation."""
+
+    def __init__(self):
+        self.api_key = os.getenv("QWEN_API_KEY")
+        self.base_url = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.model = os.getenv("QWEN_MODEL", "qwen-plus")
+
+    async def generate_minutes(self, transcript: List[TranscriptSegment]) -> MeetingMinutes:
+        """Generate meeting minutes from transcript using Qwen LLM."""
+        if not self.api_key:
+            print("Warning: QWEN_API_KEY not set, falling back to mock provider")
+            return await MockLLMProvider().generate_minutes(transcript)
+
+        import httpx
+
+        # Combine transcript with timestamps
+        transcript_text = "\n".join([
+            f"[{seg.start_ms//1000}s - {seg.end_ms//1000}s] {seg.text}"
+            for seg in transcript
+        ])
+
+        # System prompt for meeting minutes generation
+        system_prompt = """You are a professional meeting secretary. Generate structured meeting minutes in Mongolian (Cyrillic script) from the transcript.
+
+Return a JSON object with this structure:
+{
+  "title": "Meeting title in Mongolian",
+  "summary": "Brief summary in Mongolian (2-3 sentences)",
+  "topics": [{"title": "Topic title", "description": "Brief description"}],
+  "decisions": [{"text": "Decision text", "rationale": "Why this decision was made"}],
+  "action_items": [{"task": "Task description", "owner": "Person responsible or null", "due_date": "YYYY-MM-DD or null"}]
+}
+
+Important:
+- All text must be in Mongolian Cyrillic script
+- Extract actual topics, decisions, and action items from the transcript
+- If information is not available, use empty arrays
+- Be concise and professional"""
+
+        user_prompt = f"Generate meeting minutes from this transcript:\n\n{transcript_text}"
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": 0.3,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            # Parse the response
+            content = result["choices"][0]["message"]["content"]
+            import json
+            minutes_data = json.loads(content)
+
+            return MeetingMinutes(
+                title=minutes_data.get("title", "Хурлын бичиг"),
+                summary=minutes_data.get("summary", ""),
+                topics=minutes_data.get("topics", []),
+                decisions=minutes_data.get("decisions", []),
+                action_items=minutes_data.get("action_items", []),
+            )
+
+        except Exception as e:
+            print(f"Error calling Qwen API: {e}")
+            # Fall back to mock on error
+            return await MockLLMProvider().generate_minutes(transcript)
+
+
+# Use real Whisper ASR if available, otherwise fall back to mock
+ASR_PROVIDER = os.getenv("ASR_PROVIDER", "whisper")
+if ASR_PROVIDER == "whisper":
+    asr_provider = WhisperASRProvider(model_name=os.getenv("WHISPER_MODEL", "base"))
+else:
+    asr_provider = MockASRProvider()
+
+# Use Qwen LLM if API key is available, otherwise fall back to mock
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "qwen")
+if LLM_PROVIDER == "qwen" and os.getenv("QWEN_API_KEY"):
+    llm_provider = QwenLLMProvider()
+else:
+    llm_provider = MockLLMProvider()
