@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: mongolian-ai-minutes-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: CORS_ORIGINS
+        value: https://mongolian-ai-minutes.vercel.app
+      - key: ASR_PROVIDER
+        value: demo
+      - key: AUDIO_STORAGE_PATH
+        value: /data/audio_storage
+      - key: MAX_AUDIO_CHUNK_BYTES
+        value: 5000000
+    disk:
+      name: audio-storage
+      mountPath: /data/audio_storage
+      sizeGB: 1
