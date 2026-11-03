@@ -224,9 +224,15 @@ Important:
 # Use real Whisper ASR if available, otherwise fall back to mock
 ASR_PROVIDER = os.getenv("ASR_PROVIDER", "whisper")
 if ASR_PROVIDER == "whisper":
-    # Use medium model by default for better Mongolian support
-    # For production, consider using a Mongolian-fine-tuned model
-    asr_provider = WhisperASRProvider(model_name=os.getenv("WHISPER_MODEL", "medium"))
+    try:
+        # Try to import whisper - it may not be installed on all systems
+        import whisper
+        # Use medium model by default for better Mongolian support
+        # For production, consider using a Mongolian-fine-tuned model
+        asr_provider = WhisperASRProvider(model_name=os.getenv("WHISPER_MODEL", "medium"))
+    except ImportError:
+        print("Whisper not installed, falling back to mock ASR provider")
+        asr_provider = MockASRProvider()
 else:
     asr_provider = MockASRProvider()
 
