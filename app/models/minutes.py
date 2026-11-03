@@ -14,18 +14,27 @@ class TranscriptSegment(BaseModel):
 
 class Topic(BaseModel):
     title: str
-    description: str
+    description: str = ""
+    source_segment_ids: List[str] = []
 
 
 class Decision(BaseModel):
     text: str
     rationale: Optional[str] = None
+    source_segment_ids: List[str] = []
 
 
 class ActionItem(BaseModel):
     task: str
     owner: Optional[str] = None
     due_date: Optional[str] = None
+    status: str = "open"
+    source_segment_ids: List[str] = []
+
+
+class OpenQuestion(BaseModel):
+    text: str
+    source_segment_ids: List[str] = []
 
 
 class MeetingMinutes(BaseModel):
@@ -34,3 +43,4 @@ class MeetingMinutes(BaseModel):
     topics: List[Topic] = []
     decisions: List[Decision] = []
     action_items: List[ActionItem] = []
+    open_questions: List[OpenQuestion] = []

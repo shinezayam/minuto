@@ -16,7 +16,9 @@ from app.models.schemas import (
 )
 from app.models.minutes import MeetingMinutes, TranscriptSegment
 from app.services import meeting_store
-from app.services.asr import asr_provider, llm_provider
+from app.services.asr import ProviderError, asr_provider
+from app.services.audio_utils import find_meeting_audio
+from app.services.llm import llm_provider
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -134,32 +136,40 @@ async def process_meeting(meeting_id: str) -> dict:
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    # Find the uploaded audio file
+    # Upload хийсэн файл, эсвэл шууд бичлэгийн хэсгүүдийг нийлүүлсэн файл
     from app.config import settings
     meeting_dir = Path(settings.audio_storage_path) / meeting_id
-    audio_files = list(meeting_dir.glob("uploaded*"))
+    audio_file = find_meeting_audio(meeting_dir)
 
-    if not audio_files:
+    if not audio_file:
         raise HTTPException(status_code=400, detail="No audio file found. Please upload audio first.")
 
-    audio_path = str(audio_files[0])
+    try:
+        transcript = await asr_provider.transcribe(str(audio_file))
+    except ProviderError as e:
+        raise HTTPException(status_code=502, detail=f"ASR_FAILED: {e}") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"ASR_FAILED: {e}") from e
 
-    # Transcribe audio
-    transcript = await asr_provider.transcribe(audio_path)
-
-    # Store transcript
+    # Бичвэрийг тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр алга болохгүй
     meeting_store.update_meeting_transcript(meeting_id, [seg.model_dump() for seg in transcript])
 
-    # Generate meeting minutes
-    minutes = await llm_provider.generate_minutes(transcript)
+    if not transcript:
+        raise HTTPException(status_code=422, detail="NO_SPEECH: Бичлэгээс яриа танигдсангүй")
 
-    # Store minutes
+    try:
+        minutes = await llm_provider.generate_minutes(transcript)
+    except ProviderError as e:
+        raise HTTPException(status_code=502, detail=f"SUMMARY_FAILED: {e}") from e
+
     meeting_store.update_meeting_minutes(meeting_id, minutes.model_dump())
 
     return {
         "meeting_id": meeting_id,
         "status": "processed",
         "transcript_segments": len(transcript),
+        "asr_provider": asr_provider.name,
+        "llm_provider": llm_provider.name,
     }
 
 

@@ -1,79 +1,158 @@
 from __future__ import annotations
 
-from typing import List
+import asyncio
+import base64
+import json
+import logging
+from pathlib import Path
+from typing import List, Protocol
 
-from app.models.minutes import MeetingMinutes, TranscriptSegment
+import httpx
+
+from app.config import settings
+from app.models.minutes import TranscriptSegment
+from app.services.audio_utils import split_to_wav, wav_duration_ms
+
+logger = logging.getLogger(__name__)
+
+
+class ProviderError(Exception):
+    """Гадны AI үйлчилгээ (ASR/LLM) алдаа буцаасан."""
+
+
+class ASRProvider(Protocol):
+    name: str
+
+    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]: ...
 
 
 class MockASRProvider:
-    """Demo ASR provider that returns placeholder transcripts."""
+    """Демо горим — бодит таних үйлдэл хийхгүй, тодорхой шошготой бичвэр буцаана."""
+
+    name = "demo"
 
     async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
-        # In production, this would call Whisper or another ASR service
-        # For now, return demo segments
         return [
             TranscriptSegment(
                 id="seg_1",
                 start_ms=0,
                 end_ms=5000,
-                text="Сайн байна уу. Энэ бол Монгол AI Minutes системийн демо бичлэг байна.",
-                speaker=None,
-            ),
-            TranscriptSegment(
-                id="seg_2",
-                start_ms=5000,
-                end_ms=12000,
-                text="Бид энэ системийг хурлын бичиг автоматаар үүсгэх зорилгоор бүтээсэн.",
-                speaker=None,
-            ),
-            TranscriptSegment(
-                id="seg_3",
-                start_ms=12000,
-                end_ms=20000,
-                text="Ирээдүйд бодит Mongolian ASR модел нэмэгдэх болно.",
-                speaker=None,
+                text="[ДЕМО] Бодит яриа таних систем тохируулаагүй байна. ASR_PROVIDER=omni болгоно уу.",
             ),
         ]
 
 
-class MockLLMProvider:
-    """Demo LLM provider that generates meeting minutes from transcript."""
+OMNI_PROMPT = (
+    "Энэ бол монгол хэл дээрх хурлын яриа. Ярьсан үгийг яг ярьсан ёсоор нь кирилл үсгээр бичнэ үү. "
+    "Орчуулах, товчлох, засах, тайлбар нэмэхгүй. Сонсогдохгүй хэсгийг [...] гэж тэмдэглэ. "
+    "Яриа огт байхгүй бол хоосон хариу буцаа. Зөвхөн бичвэрийг буцаа."
+)
 
-    async def generate_minutes(self, transcript: List[TranscriptSegment]) -> MeetingMinutes:
-        # Combine all transcript text
-        full_text = " ".join([seg.text for seg in transcript])
 
-        # In production, this would call Qwen API
-        # For now, generate demo minutes
-        return MeetingMinutes(
-            title="Демо хурлын бичиг",
-            summary="Энэ бол демо хурлын бичиг юм. Бодит ASR болон LLM интеграци хийгдэх болно.",
-            topics=[
+class QwenOmniASRProvider:
+    """Qwen-Omni (DashScope OpenAI-compatible API)-аар аудиог текст болгоно."""
+
+    name = "omni"
+
+    def __init__(self) -> None:
+        if not settings.qwen_api_key:
+            raise RuntimeError("ASR_PROVIDER=omni боловч QWEN_API_KEY тохируулаагүй байна")
+
+    async def transcribe(self, audio_path: str) -> List[TranscriptSegment]:
+        src = Path(audio_path)
+        parts = await split_to_wav(src, src.parent / "_asr_parts", settings.omni_chunk_sec)
+        if not parts:
+            raise ValueError("Аудио хоосон байна")
+
+        sem = asyncio.Semaphore(max(1, settings.asr_concurrency))
+        chunk_ms = settings.omni_chunk_sec * 1000
+
+        async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
+
+            async def one(i: int, part: Path) -> TranscriptSegment:
+                async with sem:
+                    text = await self._transcribe_chunk(client, part)
+                start = i * chunk_ms
+                return TranscriptSegment(
+                    id=f"seg_{i + 1}",
+                    start_ms=start,
+                    end_ms=start + wav_duration_ms(part),
+                    text=text,
+                )
+
+            segments = await asyncio.gather(*(one(i, p) for i, p in enumerate(parts)))
+
+        return [s for s in segments if s.text]
+
+    async def _transcribe_chunk(self, client: httpx.AsyncClient, wav: Path) -> str:
+        b64 = base64.b64encode(wav.read_bytes()).decode("ascii")
+        body = {
+            "model": settings.omni_model,
+            "modalities": ["text"],
+            "stream": True,  # Omni загварууд зөвхөн stream горимтой
+            "temperature": 0,
+            "enable_thinking": settings.qwen_enable_thinking,
+            "messages": [
                 {
-                    "title": "Системийн танилцуулга",
-                    "description": "Mongolian AI Minutes системийн зорилго, боломжуудыг танилцуулав.",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_audio", "input_audio": {"data": f"data:;base64,{b64}", "format": "wav"}},
+                        {"type": "text", "text": OMNI_PROMPT},
+                    ],
                 }
             ],
-            decisions=[
-                {
-                    "text": "Бодит Mongolian ASR модел нэмэх",
-                    "rationale": "Демо бичвэрийг бодит бичвэрээр солих",
-                }
-            ],
-            action_items=[
-                {
-                    "task": "Whisper Mongolian модел интеграци хийх",
-                    "owner": None,
-                    "due_date": None,
-                },
-                {
-                    "task": "Qwen LLM API нэмэх",
-                    "owner": None,
-                    "due_date": None,
-                },
-            ],
-        )
+        }
+
+        last_error: Exception = ProviderError("Qwen-Omni: тодорхойгүй алдаа")
+        for attempt in range(3):
+            try:
+                return await self._stream(client, body)
+            except _ClientError as e:
+                raise ProviderError(str(e)) from e  # буруу хүсэлт, key — дахин оролдох утгагүй
+            except ProviderError as e:
+                last_error = e
+            except httpx.HTTPError as e:
+                last_error = ProviderError(f"Qwen-Omni холболтын алдаа: {e}")
+            if attempt < 2:
+                await asyncio.sleep(2**attempt)
+        raise last_error
+
+    async def _stream(self, client: httpx.AsyncClient, body: dict) -> str:
+        url = settings.qwen_base_url.rstrip("/") + "/chat/completions"
+        headers = {"Authorization": f"Bearer {settings.qwen_api_key}"}
+        text = []
+        async with client.stream("POST", url, json=body, headers=headers) as res:
+            if res.status_code != 200:
+                detail = (await res.aread()).decode("utf-8", "replace")[:300]
+                msg = f"Qwen-Omni HTTP {res.status_code}: {detail}"
+                if 400 <= res.status_code < 500 and res.status_code != 429:
+                    raise _ClientError(msg)
+                raise ProviderError(msg)
+            async for line in res.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                if chunk.get("error"):
+                    raise ProviderError(f"Qwen-Omni: {chunk['error']}")
+                for choice in chunk.get("choices") or []:
+                    text.append((choice.get("delta") or {}).get("content") or "")
+        return "".join(text).strip()
 
 
-asr_provider = MockASRProvider()
-llm_provider = MockLLMProvider()
+class _ClientError(Exception):
+    pass
+
+
+def make_asr_provider() -> ASRProvider:
+    if settings.asr_provider == "omni":
+        return QwenOmniASRProvider()
+    if settings.asr_provider != "demo":
+        raise RuntimeError(f"Тодорхойгүй ASR_PROVIDER: {settings.asr_provider}")
+    return MockASRProvider()
+
+
+asr_provider: ASRProvider = make_asr_provider()

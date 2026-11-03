@@ -87,3 +87,4 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
     asr_provider: str
+    llm_provider: str = "demo"
