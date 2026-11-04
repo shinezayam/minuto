@@ -30,6 +30,16 @@ class ASRProvider(Protocol):
     async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]: ...
 
 
+class LiveASRProvider(Protocol):
+    """Хурлын үеэр богино (10-25 сек) wav хэсгийг шууд текст болгож чаддаг provider."""
+
+    async def transcribe_wav_bytes(self, wav: bytes) -> str: ...
+
+
+def supports_live(provider: object) -> bool:
+    return callable(getattr(provider, "transcribe_wav_bytes", None))
+
+
 class MockASRProvider:
     """Демо горим — бодит таних үйлдэл хийхгүй, тодорхой шошготой бичвэр буцаана."""
 
@@ -46,6 +56,9 @@ class MockASRProvider:
                 text="[ДЕМО] Бодит яриа таних систем тохируулаагүй байна. ASR_PROVIDER=omni болгоно уу.",
             ),
         ]
+
+    async def transcribe_wav_bytes(self, wav: bytes) -> str:
+        return "[ДЕМО] шууд бичвэр"
 
 
 OMNI_PROMPT = (
@@ -97,8 +110,15 @@ class QwenOmniASRProvider:
 
         return [s for s in segments if s.text]
 
+    async def transcribe_wav_bytes(self, wav: bytes) -> str:
+        async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
+            return await self._transcribe_bytes(client, wav)
+
     async def _transcribe_chunk(self, client: httpx.AsyncClient, wav: Path) -> str:
-        b64 = base64.b64encode(wav.read_bytes()).decode("ascii")
+        return await self._transcribe_bytes(client, wav.read_bytes())
+
+    async def _transcribe_bytes(self, client: httpx.AsyncClient, wav: bytes) -> str:
+        b64 = base64.b64encode(wav).decode("ascii")
         body = {
             "model": settings.omni_model,
             "modalities": ["text"],

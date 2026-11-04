@@ -16,7 +16,7 @@ from app.models.schemas import (
     MeetingUpdate,
     UserResponse,
 )
-from app.services import meeting_store, processing
+from app.services import live_transcriber, meeting_store, processing
 from app.services.audio_utils import find_meeting_audio
 from app.services.auth import current_user
 
@@ -78,6 +78,9 @@ def start_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -
 
 @router.post("/{meeting_id}/pause", response_model=MeetingResponse)
 def pause_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    live = live_transcriber.get(meeting_id)
+    if live is not None and meeting_store.get_meeting(meeting_id, user.id):
+        live.request_flush()  # зогсоохоос өмнө хэлсэн үгийг шууд харуулна
     meeting = meeting_store.pause_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found or not recording")
@@ -93,17 +96,19 @@ def resume_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) 
 
 
 @router.post("/{meeting_id}/end", response_model=MeetingResponse)
-def end_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+async def end_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
     meeting = meeting_store.end_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
+    await live_transcriber.stop(meeting_id)  # бүтэн бичвэрийг /process гаргана
     return meeting
 
 
 @router.delete("/{meeting_id}", status_code=204, response_model=None)
-def delete_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> None:
+async def delete_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> None:
     if not meeting_store.delete_meeting(meeting_id, user.id):
         raise HTTPException(status_code=404, detail="Meeting not found")
+    await live_transcriber.stop(meeting_id)
     # Хурлыг устгахад аудио бичлэг ч устна
     shutil.rmtree(processing.meeting_dir(meeting_id), ignore_errors=True)
 
@@ -150,6 +155,7 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
         raise HTTPException(status_code=400, detail="NO_AUDIO: No audio file found. Please upload audio first.")
     if not meeting_store.try_begin_processing(meeting_id):
         raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Энэ хурлыг боловсруулж байна")
+    await live_transcriber.stop(meeting_id)
     processing.start(meeting_id)
     return {"meeting_id": meeting_id, "status": "processing"}
 

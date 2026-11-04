@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # Qwen3 загваруудын "бодох" горим. Асаавал хариу 10-20 дахин удааширдаг тул default-аар унтраана.
     qwen_enable_thinking: bool = False
 
+    # Хурлын үеэр бичвэрийг шууд харуулах (ASR-ийг ойролцоогоор 2 дахин их хэрэглэнэ).
+    # Цонх: хамгийн багадаа live_min_sec, чимээгүй хэсэг хайж эхлэх live_window_sec, заавал таслах live_max_sec
+    live_transcription: bool = True
+    live_min_sec: int = 8
+    live_window_sec: int = 15
+    live_max_sec: int = 25
+
     # ffmpeg-ийн зам. Хоосон бол PATH, дараа нь imageio-ffmpeg-ээс хайна.
     ffmpeg_path: str = ""
 

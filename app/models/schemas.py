@@ -113,3 +113,5 @@ class HealthResponse(BaseModel):
     llm_provider: str = "demo"
     # "postgresql" | "sqlite" — өгөгдөл сервер дахин эхлэхэд хадгалагдах эсэхийг шалгахад
     database: str = ""
+    # Хурлын үеэр бичвэрийг шууд харуулах боломжтой эсэх
+    live_transcription: bool = False

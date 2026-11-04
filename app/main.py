@@ -12,7 +12,7 @@ from app.models.schemas import HealthResponse
 from app.api.auth import router as auth_router
 from app.api.meetings import router as meetings_router
 from app.api.websocket import router as websocket_router
-from app.services import meeting_store
+from app.services import live_transcriber, meeting_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     if interrupted:
         logger.warning("%d meeting(s) were interrupted by a restart and marked as failed", interrupted)
     yield
+    await live_transcriber.stop_all()
 
 
 app = FastAPI(
@@ -56,4 +57,5 @@ async def health() -> HealthResponse:
         asr_provider=settings.asr_provider,
         llm_provider=settings.llm_provider,
         database=db.dialect(),
+        live_transcription=live_transcriber.enabled(),
     )
