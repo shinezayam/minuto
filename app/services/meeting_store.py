@@ -224,3 +224,22 @@ def get_meeting_minutes(meeting_id: str) -> Optional[dict]:
     with session_scope() as s:
         m = s.get(Meeting, meeting_id)
         return dict(m.minutes) if m and m.minutes else None
+
+
+def list_meeting_contents(owner_id: str, meeting_id: Optional[str] = None) -> list[dict]:
+    """Ask Minuto-д: бичвэртэй хурлуудын бичвэр, тэмдэглэл (шинэ нь эхэндээ)."""
+    with session_scope() as s:
+        q = select(Meeting).where(Meeting.owner_id == owner_id, Meeting.transcript.is_not(None))
+        if meeting_id is not None:
+            q = q.where(Meeting.id == meeting_id)
+        rows = s.scalars(q.order_by(Meeting.created_at.desc())).all()
+        return [
+            {
+                "id": m.id,
+                "title": m.title,
+                "created_at": m.created_at,
+                "transcript": list(m.transcript or []),
+                "minutes": dict(m.minutes) if m.minutes else None,
+            }
+            for m in rows
+        ]

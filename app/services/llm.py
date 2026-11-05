@@ -98,6 +98,11 @@ class QwenLLMProvider:
 
         raise ProviderError("Qwen-ээс зөв бүтэцтэй хариу ирсэнгүй")
 
+    async def complete_json(self, messages: list) -> str:
+        """JSON хариу буцаах ерөнхий дуудлага (Ask Minuto)."""
+        async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
+            return await self._complete(client, messages)
+
     async def _complete(self, client: httpx.AsyncClient, messages: list) -> str:
         url = settings.qwen_base_url.rstrip("/") + "/chat/completions"
         try:

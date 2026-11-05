@@ -16,7 +16,7 @@ services:
       - key: LLM_PROVIDER
         value: qwen
       - key: QWEN_BASE_URL
-        value: https://ali.gerege.mn/v1
+        value: https://tokenhub.mn/v1
       - key: QWEN_MODEL
         value: qwen3.7-plus
       - key: OMNI_MODEL

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -115,3 +115,34 @@ class HealthResponse(BaseModel):
     database: str = ""
     # Хурлын үеэр бичвэрийг шууд харуулах боломжтой эсэх
     live_transcription: bool = False
+
+
+# ---------- Ask Minuto ----------
+
+class AskMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    # Байхгүй бол хэрэглэгчийн бүх хурлаас хайна
+    meeting_id: Optional[str] = None
+    history: List[AskMessage] = Field(default_factory=list, max_length=20)
+
+
+class AskCitation(BaseModel):
+    ref: str
+    meeting_id: str
+    meeting_title: str
+    segment_id: str
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+class AskResponse(BaseModel):
+    # Хариултад эх сурвалжийг [S12] гэж заасан; citations-ийн ref-тэй тохирно
+    answer: str
+    citations: List[AskCitation]
+    meetings_searched: int

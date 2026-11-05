@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import db
 from app.config import settings
 from app.models.schemas import HealthResponse
+from app.api.ask import router as ask_router
 from app.api.auth import router as auth_router
 from app.api.meetings import router as meetings_router
 from app.api.websocket import router as websocket_router
@@ -47,6 +48,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(meetings_router)
 app.include_router(websocket_router)
+app.include_router(ask_router)
 
 
 @app.get("/api/health", response_model=HealthResponse)
