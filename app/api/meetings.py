@@ -168,10 +168,17 @@ def get_transcript(meeting_id: str, user: UserResponse = Depends(current_user)) 
 
 @router.get("/{meeting_id}/minutes")
 def get_minutes(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingMinutes:
-    _owned(meeting_id, user)
+    meeting = _owned(meeting_id, user)
     minutes = meeting_store.get_meeting_minutes(meeting_id)
     if not minutes:
-        raise HTTPException(status_code=404, detail="Minutes not generated yet. Process the meeting first.")
+        # Шалтгааныг нууж болохгүй: боловсруулалт унасан бол яг ямар алдаа гарсныг буцаана
+        if meeting.processing_error:
+            detail = f"Minutes not generated: {meeting.processing_error}"
+        elif meeting.processing_stage and meeting.processing_stage not in ("done", "failed"):
+            detail = f"PROCESSING: Боловсруулж байна ({meeting.processing_stage}). Дуусахыг хүлээнэ үү."
+        else:
+            detail = "Minutes not generated yet. Process the meeting first."
+        raise HTTPException(status_code=404, detail=detail)
     return MeetingMinutes(**minutes)
 
 
