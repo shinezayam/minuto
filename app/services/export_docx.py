@@ -18,6 +18,7 @@ def generate_meeting_docx(
     created_at: str,
     minutes: MeetingMinutes,
     transcript: Optional[List[dict]] = None,
+    participants: Optional[List[str]] = None,
 ) -> bytes:
     """Generate a DOCX file from meeting minutes."""
     doc = Document()
@@ -44,6 +45,22 @@ def generate_meeting_docx(
     run = meta.add_run(f"Огноо: {date_str}")
     run.font.size = Pt(10)
     run.font.color.rgb = RGBColor(100, 100, 100)
+
+    # Оролцогчид: хэрэглэгчийн оруулсан нэрс, байхгүй бол бичвэрээс ялгасан яригчид
+    attendees = participants or minutes.participants
+    info_lines = []
+    if attendees:
+        info_lines.append(("Оролцогчид: ", ", ".join(attendees)))
+    if minutes.prepared_by:
+        info_lines.append(("Хурлын тэмдэглэл хөтөлсөн: ", minutes.prepared_by))
+    for label, value in info_lines:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run(label)
+        r.bold = True
+        r.font.size = Pt(10)
+        r = p.add_run(value)
+        r.font.size = Pt(10)
 
     doc.add_paragraph()  # Spacer
 
@@ -107,6 +124,25 @@ def generate_meeting_docx(
         for q in minutes.open_questions:
             doc.add_paragraph(q.text, style="List Bullet")
 
+    # Questions & answers
+    if minutes.qa:
+        doc.add_heading("Асуулт, хариулт", level=1)
+        for i, qa in enumerate(minutes.qa, 1):
+            p = doc.add_paragraph()
+            r = p.add_run(f"{i}. Асуулт" + (f" ({qa.asked_by})" if qa.asked_by else "") + ": ")
+            r.bold = True
+            p.add_run(qa.question)
+            p = doc.add_paragraph()
+            p.paragraph_format.left_indent = Inches(0.3)
+            r = p.add_run("Хариулт" + (f" ({qa.answered_by})" if qa.answered_by else "") + ": ")
+            r.bold = True
+            if qa.answer:
+                p.add_run(qa.answer)
+            else:
+                r = p.add_run("хариулаагүй")
+                r.italic = True
+                r.font.color.rgb = RGBColor(150, 150, 150)
+
     # Transcript appendix
     if transcript:
         doc.add_page_break()
@@ -118,11 +154,19 @@ def generate_meeting_docx(
             seconds_val = (start_ms % 60000) // 1000
             timestamp = f"[{minutes_val:02d}:{seconds_val:02d}]"
 
-            p = doc.add_paragraph()
-            run = p.add_run(f"{timestamp} ")
-            run.font.size = Pt(9)
-            run.font.color.rgb = RGBColor(100, 100, 100)
-            p.add_run(segment.get("text", ""))
+            turns = segment.get("turns") or []
+            if not turns:
+                turns = [{"speaker": None, "text": segment.get("text", "")}]
+            for j, turn in enumerate(turns):
+                p = doc.add_paragraph()
+                if j == 0:
+                    run = p.add_run(f"{timestamp} ")
+                    run.font.size = Pt(9)
+                    run.font.color.rgb = RGBColor(100, 100, 100)
+                if turn.get("speaker"):
+                    run = p.add_run(f"{turn['speaker']}: ")
+                    run.bold = True
+                p.add_run(turn.get("text", ""))
 
     # Save to bytes
     buffer = io.BytesIO()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
-from app.models.schemas import AuthRequest, AuthResponse, UserResponse
+from app.models.schemas import AuthRequest, AuthResponse, UserResponse, UserUpdate
 from app.services import auth
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 def register(body: AuthRequest) -> AuthResponse:
     if not settings.allow_registration:
         raise HTTPException(status_code=403, detail="REGISTRATION_CLOSED: Бүртгэл хаалттай байна")
-    user = auth.register(body.email, body.password)
+    user = auth.register(body.email, body.password, body.name)
     return AuthResponse(token=auth.create_token(user.id), user=user)
 
 
@@ -28,3 +28,11 @@ def login(body: AuthRequest) -> AuthResponse:
 @router.get("/me", response_model=UserResponse)
 def me(user: UserResponse = Depends(auth.current_user)) -> UserResponse:
     return user
+
+
+@router.patch("/me", response_model=UserResponse)
+def update_me(body: UserUpdate, user: UserResponse = Depends(auth.current_user)) -> UserResponse:
+    updated = auth.update_name(user.id, body.name)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return updated

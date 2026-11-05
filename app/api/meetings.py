@@ -38,6 +38,11 @@ _UPLOAD_EXT = {
 }
 
 
+def _prepared_by(user: UserResponse) -> str:
+    """Хурлын тэмдэглэл хөтөлсөн: Minuto / <хэрэглэгчийн нэр, нэргүй бол имэйл>"""
+    return f"Minuto / {(user.name or '').strip() or user.email}"
+
+
 def _owned(meeting_id: str, user: UserResponse) -> MeetingResponse:
     meeting = meeting_store.get_meeting(meeting_id, user.id)
     if not meeting:
@@ -193,7 +198,7 @@ def get_minutes(meeting_id: str, user: UserResponse = Depends(current_user)) -> 
         else:
             detail = "Minutes not generated yet. Process the meeting first."
         raise HTTPException(status_code=404, detail=detail)
-    return MeetingMinutes(**minutes)
+    return MeetingMinutes(**{**minutes, "prepared_by": _prepared_by(user)})
 
 
 @router.get("/{meeting_id}/audio")
@@ -219,8 +224,9 @@ def export_docx(meeting_id: str, user: UserResponse = Depends(current_user)):
         meeting_id=meeting_id,
         title=meeting.title,
         created_at=str(meeting.created_at),
-        minutes=MeetingMinutes(**minutes_data),
+        minutes=MeetingMinutes(**{**minutes_data, "prepared_by": _prepared_by(user)}),
         transcript=meeting_store.get_meeting_transcript(meeting_id),
+        participants=meeting.participants,
     )
     return StreamingResponse(
         io.BytesIO(docx_bytes),

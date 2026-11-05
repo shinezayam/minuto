@@ -15,6 +15,7 @@ from app.services import llm as llm_mod
 from app.services import meeting_store
 from app.services.asr import ProviderError
 from app.services.audio_utils import find_meeting_audio
+from app.services.speakers import apply_speaker_map
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ async def run(meeting_id: str) -> None:
             str(audio),
             on_progress=lambda done, total: meeting_store.set_progress(meeting_id, "transcribing", done, total),
         )
-        # Тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр алга болохгүй
+        # Тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр (хэсэг доторх яригчтай) алга болохгүй
+        transcript = apply_speaker_map(transcript, {})
         meeting_store.update_meeting_transcript(meeting_id, [s.model_dump() for s in transcript])
         if not transcript:
             meeting_store.finish_processing(meeting_id, "NO_SPEECH: Бичлэгээс яриа танигдсангүй")
@@ -52,8 +54,13 @@ async def run(meeting_id: str) -> None:
 
         stage = "summarizing"
         meeting_store.set_progress(meeting_id, "summarizing")
-        minutes = await llm_mod.llm_provider.generate_minutes(transcript)
-        meeting_store.update_meeting_minutes(meeting_id, minutes.model_dump())
+        participants = meeting_store.get_meeting_context(meeting_id)["participants"]
+        minutes = await llm_mod.llm_provider.generate_minutes(transcript, participants)
+        # Хэсэг бүрийн "Яригч N"-ийг хурлын хэмжээний яригч болгож бичвэрийг шинэчилнэ
+        transcript = apply_speaker_map(transcript, minutes.speaker_map)
+        meeting_store.update_meeting_transcript(meeting_id, [s.model_dump() for s in transcript])
+        minutes.speaker_map = {}
+        meeting_store.update_meeting_minutes(meeting_id, minutes.model_dump(exclude={"prepared_by"}))
         meeting_store.finish_processing(meeting_id)
         logger.info("Meeting %s processed: %d segments", meeting_id, len(transcript))
 

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -34,6 +34,8 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    # Хурлын тэмдэглэлд "Хөтөлсөн: Minuto / <нэр>" гэж гарна
+    name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -61,6 +63,21 @@ class Meeting(Base):
 
     transcript: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     minutes: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Хурлын оролцогчдын нэрс (хэрэглэгч оруулсан)
+    participants: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
+
+class Contact(Base):
+    """Хэрэглэгчийн өмнө нь оруулсан оролцогчид — дараагийн хурал дээр дахин бичихгүй сонгоно."""
+
+    __tablename__ = "contacts"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_contact_owner_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 _engine: Optional[Engine] = None
@@ -92,8 +109,25 @@ def configure(url: Optional[str] = None) -> Engine:
     _engine = create_engine(url, **kwargs)
     _SessionLocal = sessionmaker(_engine, expire_on_commit=False)
     Base.metadata.create_all(_engine)
+    _add_missing_columns(_engine)
     logger.info("Database ready: %s", _engine.url.render_as_string(hide_password=True))
     return _engine
+
+
+# create_all() байгаа хүснэгтэд шинэ багана нэмдэггүй тул энд жагсааж нэмнэ (Postgres, SQLite хоёуланд)
+_ADDED_COLUMNS = [
+    ("users", "name", "VARCHAR(100)"),
+    ("meetings", "participants", "JSON"),
+]
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    insp = inspect(engine)
+    for table, column, ddl in _ADDED_COLUMNS:
+        if column not in {c["name"] for c in insp.get_columns(table)}:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            logger.info("Added column %s.%s", table, column)
 
 
 @contextmanager

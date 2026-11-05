@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import select, update
 
-from app.db import Meeting, session_scope
-from app.models.schemas import MeetingCreate, MeetingResponse, MeetingStatus, MeetingUpdate
+from app.db import Contact, Meeting, User, session_scope
+from app.models.schemas import ContactResponse, MeetingCreate, MeetingResponse, MeetingStatus, MeetingUpdate
 
 
 def _now() -> datetime:
@@ -34,6 +34,7 @@ def _to_response(m: Meeting) -> MeetingResponse:
         processing_done=m.processing_done or 0,
         processing_total=m.processing_total or 0,
         processing_error=m.processing_error,
+        participants=list(m.participants or []),
     )
 
 
@@ -44,12 +45,47 @@ def _get(session, meeting_id: str, owner_id: Optional[str]) -> Optional[Meeting]
     return m
 
 
+def _dedupe(names: List[str]) -> List[str]:
+    """Давхардсан нэрийг (том жижиг үсэг ялгахгүй) хасна, дарааллыг хадгална."""
+    seen: set[str] = set()
+    out: List[str] = []
+    for n in names:
+        n = " ".join(n.split())
+        if n and n.casefold() not in seen:
+            seen.add(n.casefold())
+            out.append(n)
+    return out
+
+
+def _remember_contacts(session, owner_id: str, names: List[str]) -> None:
+    """Оролцогчдыг хэрэглэгчийн жагсаалтад хадгална — дараагийн хурал дээр дахин бичихгүй."""
+    if not names:
+        return
+    existing = {c.name.casefold(): c for c in session.scalars(select(Contact).where(Contact.owner_id == owner_id))}
+    for name in names:
+        c = existing.get(name.casefold())
+        if c:
+            c.last_used_at = _now()
+        else:
+            c = Contact(owner_id=owner_id, name=name)
+            session.add(c)
+            existing[name.casefold()] = c
+
+
 # ---------- CRUD ----------
 
 def create_meeting(owner_id: str, data: MeetingCreate) -> MeetingResponse:
+    participants = _dedupe(data.participants)
     with session_scope() as s:
-        m = Meeting(owner_id=owner_id, title=data.title, language=data.language, status=MeetingStatus.DRAFT.value)
+        m = Meeting(
+            owner_id=owner_id,
+            title=data.title,
+            language=data.language,
+            status=MeetingStatus.DRAFT.value,
+            participants=participants,
+        )
         s.add(m)
+        _remember_contacts(s, owner_id, participants)
         s.flush()
         return _to_response(m)
 
@@ -75,6 +111,9 @@ def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optio
             return None
         if data.title is not None:
             m.title = data.title
+        if data.participants is not None:
+            m.participants = _dedupe(data.participants)
+            _remember_contacts(s, owner_id, m.participants)
         m.updated_at = _now()
         return _to_response(m)
 
@@ -243,3 +282,38 @@ def list_meeting_contents(owner_id: str, meeting_id: Optional[str] = None) -> li
             }
             for m in rows
         ]
+
+
+def get_meeting_context(meeting_id: str) -> dict:
+    """Боловсруулалтад: оролцогчид болон тэмдэглэл хөтлөгчийн нэр."""
+    with session_scope() as s:
+        m = s.get(Meeting, meeting_id)
+        if not m:
+            return {"participants": [], "owner_name": None}
+        owner = s.get(User, m.owner_id)
+        return {"participants": list(m.participants or []), "owner_name": owner_display_name(owner)}
+
+
+def owner_display_name(user: Optional[User]) -> Optional[str]:
+    if not user:
+        return None
+    return (user.name or "").strip() or user.email
+
+
+# ---------- Байнгын оролцогчид ----------
+
+def list_contacts(owner_id: str) -> List[ContactResponse]:
+    with session_scope() as s:
+        rows = s.scalars(
+            select(Contact).where(Contact.owner_id == owner_id).order_by(Contact.last_used_at.desc(), Contact.name)
+        ).all()
+        return [ContactResponse(id=c.id, name=c.name) for c in rows]
+
+
+def delete_contact(contact_id: str, owner_id: str) -> bool:
+    with session_scope() as s:
+        c = s.get(Contact, contact_id)
+        if not c or c.owner_id != owner_id:
+            return False
+        s.delete(c)
+        return True

@@ -69,22 +69,26 @@ def decode_token(token: str) -> Optional[str]:
 
 # ---------- Хэрэглэгч ----------
 
-def register(email: str, password: str) -> UserResponse:
+def _user_response(user: User) -> UserResponse:
+    return UserResponse(id=user.id, email=user.email, name=user.name)
+
+
+def register(email: str, password: str, name: Optional[str] = None) -> UserResponse:
     email = email.strip().lower()
     with session_scope() as s:
         if s.scalar(select(User).where(User.email == email)):
             raise HTTPException(status_code=409, detail="EMAIL_TAKEN: Энэ имэйлээр бүртгэл үүссэн байна")
-        user = User(email=email, password_hash=hash_password(password))
+        user = User(email=email, password_hash=hash_password(password), name=(name or "").strip() or None)
         s.add(user)
         s.flush()
-        return UserResponse(id=user.id, email=user.email)
+        return _user_response(user)
 
 
 def authenticate(email: str, password: str) -> Optional[UserResponse]:
     with session_scope() as s:
         user = s.scalar(select(User).where(User.email == email.strip().lower()))
         if user and verify_password(password, user.password_hash):
-            return UserResponse(id=user.id, email=user.email)
+            return _user_response(user)
     return None
 
 
@@ -94,7 +98,16 @@ def user_from_token(token: Optional[str]) -> Optional[UserResponse]:
         return None
     with session_scope() as s:
         user = s.get(User, user_id)
-        return UserResponse(id=user.id, email=user.email) if user else None
+        return _user_response(user) if user else None
+
+
+def update_name(user_id: str, name: str) -> Optional[UserResponse]:
+    with session_scope() as s:
+        user = s.get(User, user_id)
+        if not user:
+            return None
+        user.name = name.strip() or None
+        return _user_response(user)
 
 
 def token_from_request(request: Request) -> Optional[str]:

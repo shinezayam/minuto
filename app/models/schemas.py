@@ -3,9 +3,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class MeetingStatus(str, Enum):
@@ -17,13 +17,18 @@ class MeetingStatus(str, Enum):
     FAILED = "failed"
 
 
+ParticipantName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
 class MeetingCreate(BaseModel):
     title: str = Field(default="Шинэ хурал", max_length=200)
     language: str = Field(default="mn", max_length=5)
+    participants: List[ParticipantName] = Field(default_factory=list, max_length=50)
 
 
 class MeetingUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200)
+    participants: Optional[List[ParticipantName]] = Field(default=None, max_length=50)
 
 
 class MeetingResponse(BaseModel):
@@ -42,6 +47,7 @@ class MeetingResponse(BaseModel):
     processing_total: int = 0
     # "CODE: тайлбар" хэлбэртэй (NO_AUDIO, NO_SPEECH, ASR_FAILED, SUMMARY_FAILED, INTERRUPTED, INTERNAL_ERROR)
     processing_error: Optional[str] = None
+    participants: List[str] = Field(default_factory=list)
 
 
 class MeetingListResponse(BaseModel):
@@ -53,11 +59,27 @@ class MeetingListResponse(BaseModel):
 class AuthRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=8, max_length=200)
+    # Зөвхөн бүртгүүлэхэд
+    name: Optional[str] = Field(default=None, max_length=100)
 
 
 class UserResponse(BaseModel):
     id: str
     email: str
+    name: Optional[str] = None
+
+
+class UserUpdate(BaseModel):
+    name: str = Field(max_length=100)
+
+
+class ContactResponse(BaseModel):
+    id: str
+    name: str
+
+
+class ContactListResponse(BaseModel):
+    contacts: List[ContactResponse]
 
 
 class AuthResponse(BaseModel):
