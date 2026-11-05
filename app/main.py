@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,4 +61,6 @@ async def health() -> HealthResponse:
         llm_provider=settings.llm_provider,
         database=db.dialect(),
         live_transcription=live_transcriber.enabled(),
+        qwen_host=urlparse(settings.qwen_base_url).hostname or "",
+        qwen_key_hint=("…" + settings.qwen_api_key[-4:]) if len(settings.qwen_api_key) > 8 else ("set" if settings.qwen_api_key else ""),
     )
