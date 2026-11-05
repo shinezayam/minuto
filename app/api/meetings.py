@@ -17,7 +17,7 @@ from app.models.schemas import (
     UserResponse,
 )
 from app.services import live_transcriber, meeting_store, processing
-from app.services.audio_utils import find_meeting_audio
+from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services.auth import current_user
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
@@ -136,6 +136,20 @@ async def upload_audio(
             shutil.copyfileobj(file.file, f)
 
     await asyncio.to_thread(_save)
+
+    # Гэмтсэн/дутуу файлыг Process хүртэл хүлээлгүй, upload дээр нь шууд буцаана
+    probe_error = await asyncio.to_thread(probe_audio_error, filepath)
+    if probe_error:
+        filepath.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "INVALID_AUDIO: Аудио файл гэмтсэн эсвэл дутуу байна (бичлэг бүрэн хадгалагдаагүй, "
+                "эсвэл дутуу татагдсан байж болно). Файлаа тоглуулж шалгаад дахин upload хийнэ үү. "
+                f"[{probe_error}]"
+            ),
+        )
+
     return {
         "meeting_id": meeting_id,
         "filename": filepath.name,

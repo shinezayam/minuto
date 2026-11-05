@@ -90,16 +90,42 @@ async def test_upload_audio(client: AsyncClient):
     resp = await client.post("/api/meetings", json={"title": "Upload test"})
     meeting_id = resp.json()["id"]
 
-    # Upload a fake audio file
+    # Upload a real (silent) WAV file
     import io
-    audio_content = b"fake audio data"
-    files = {"file": ("test.mp3", io.BytesIO(audio_content), "audio/mpeg")}
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 16000)
+    files = {"file": ("test.wav", io.BytesIO(buf.getvalue()), "audio/wav")}
     resp = await client.post(f"/api/meetings/{meeting_id}/upload", files=files)
     assert resp.status_code == 200
     data = resp.json()
     assert data["meeting_id"] == meeting_id
     assert data["status"] == "uploaded"
     assert "filename" in data
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_corrupt_audio(client: AsyncClient):
+    from app.services.audio_utils import ffmpeg_exe
+    try:
+        ffmpeg_exe()
+    except RuntimeError:
+        pytest.skip("ffmpeg алга")
+
+    import io
+    meeting_id = (await client.post("/api/meetings", json={"title": "Corrupt"})).json()["id"]
+    # moov atom-гүй, дутуу m4a
+    files = {"file": ("broken.m4a", io.BytesIO(b"\x00\x00\x00\x18ftypM4A broken data"), "audio/m4a")}
+    resp = await client.post(f"/api/meetings/{meeting_id}/upload", files=files)
+    assert resp.status_code == 400
+    assert resp.json()["detail"].startswith("INVALID_AUDIO")
+    # Гэмтсэн файл хадгалагдахгүй тул Process "аудио алга" гэж хэлнэ
+    resp = await client.post(f"/api/meetings/{meeting_id}/process")
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

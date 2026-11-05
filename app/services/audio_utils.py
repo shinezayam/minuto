@@ -55,6 +55,22 @@ def find_meeting_audio(meeting_dir: Path) -> Optional[Path]:
     return combined
 
 
+def probe_audio_error(path: Path) -> Optional[str]:
+    """
+    Файлыг ffmpeg-ээр нээж эхний секундийг задлана. Гэмтсэн/дутуу файл (жишээ нь moov atom-гүй m4a)
+    бол алдааны мэдээг, хэвийн бол None буцаана. ffmpeg байхгүй бол шалгахгүй (None).
+    """
+    try:
+        exe = ffmpeg_exe()
+    except RuntimeError:
+        return None
+    cmd = [exe, "-hide_banner", "-loglevel", "error", "-i", str(path), "-vn", "-t", "1", "-f", "null", "-"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        return proc.stderr.strip()[-300:] or f"ffmpeg exit {proc.returncode}"
+    return None
+
+
 def _split_sync(src: Path, out_dir: Path, chunk_sec: int, sample_rate: int) -> List[Path]:
     if out_dir.exists():
         shutil.rmtree(out_dir)
