@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Qwen-Omni загвар, нэг удаа илгээх аудионы урт (сек), зэрэг илгээх хүсэлтийн тоо
     omni_model: str = "qwen3-omni-flash"
     omni_chunk_sec: int = 30
-    asr_concurrency: int = 4
+    asr_concurrency: int = 12  # 30с хэсгийг зэрэг илгээх тоо; 6 мин бичлэг: 4 → 306с, 12 → 38с
     # ASR_PROVIDER=whisper үед
     whisper_model: str = "medium"
 
