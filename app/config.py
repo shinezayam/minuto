@@ -54,6 +54,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _empty_to_default(self) -> "Settings":
+        # Render зэрэг dashboard-д утгыг хашилттай ("sk-...") эсвэл зайтай хуулж оруулбал токен буруу болно
+        self.qwen_api_key = self.qwen_api_key.strip().strip("\"'").strip()
+        self.qwen_base_url = self.qwen_base_url.strip().strip("\"'").strip()
         # .env-д "QWEN_MODEL=" гэх мэт хоосон үлдсэн бол default-ыг хэрэглэнэ
         if not self.qwen_base_url:
             self.qwen_base_url = DEFAULT_QWEN_BASE_URL
