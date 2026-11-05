@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     asr_device: str = "auto"
     # Qwen-Omni загвар, нэг удаа илгээх аудионы урт (сек), зэрэг илгээх хүсэлтийн тоо
     omni_model: str = "qwen3-omni-flash"
-    omni_chunk_sec: int = 180  # 3 мин; Qwen-Omni 3 минутын аудиог ~2 мин боловсруулдаг
+    omni_chunk_sec: int = 30
     asr_concurrency: int = 4
     # ASR_PROVIDER=whisper үед
     whisper_model: str = "medium"
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Олон улсын endpoint. Хятадынх: https://dashscope.aliyuncs.com/compatible-mode/v1
     qwen_base_url: str = DEFAULT_QWEN_BASE_URL
     qwen_model: str = "qwen-plus"
-    qwen_timeout_sec: int = 300
+    qwen_timeout_sec: int = 180
     # Qwen3 загваруудын "бодох" горим. Асаавал хариу 10-20 дахин удааширдаг тул default-аар унтраана.
     qwen_enable_thinking: bool = False
 
