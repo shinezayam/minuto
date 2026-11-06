@@ -40,6 +40,18 @@ class TranscriptReplace(BaseModel):
     include_minutes: bool = True
 
 
+class TranscriptSegmentUpdate(BaseModel):
+    """Нэг сегмент засварлах."""
+    id: str
+    text: Optional[str] = None
+    speaker: Optional[str] = None
+
+
+class TranscriptUpdate(BaseModel):
+    """Бичвэр засварлах - сегментүүд."""
+    segments: List[TranscriptSegmentUpdate]
+
+
 class MeetingResponse(BaseModel):
     id: str
     title: str

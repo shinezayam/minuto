@@ -259,6 +259,37 @@ def update_meeting_transcript(meeting_id: str, transcript: list) -> None:
         s.execute(update(Meeting).where(Meeting.id == meeting_id).values(transcript=transcript, updated_at=_now()))
 
 
+def update_transcript_segments(meeting_id: str, updates: list[dict]) -> list:
+    """Сегментүүдийг засварлах. updates: [{"id": "seg_1", "text": "...", "speaker": "..."}]"""
+    with session_scope() as s:
+        m = s.get(Meeting, meeting_id)
+        if not m or not m.transcript:
+            return []
+        
+        transcript = list(m.transcript)
+        update_map = {u["id"]: u for u in updates}
+        
+        for seg in transcript:
+            seg_id = seg.get("id")
+            if seg_id in update_map:
+                upd = update_map[seg_id]
+                if "text" in upd and upd["text"] is not None:
+                    seg["text"] = upd["text"]
+                if "speaker" in upd and upd["speaker"] is not None:
+                    seg["speaker"] = upd["speaker"]
+                # turns дотор засварлах
+                if "turns" in seg and isinstance(seg["turns"], list):
+                    for turn in seg["turns"]:
+                        if "text" in upd and upd["text"] is not None:
+                            turn["text"] = upd["text"]
+                        if "speaker" in upd and upd["speaker"] is not None:
+                            turn["speaker"] = upd["speaker"]
+        
+        m.transcript = transcript
+        m.updated_at = _now()
+        return transcript
+
+
 def get_meeting_transcript(meeting_id: str) -> list:
     with session_scope() as s:
         m = s.get(Meeting, meeting_id)

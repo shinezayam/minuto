@@ -14,6 +14,7 @@ from app.models.schemas import (
     MeetingListResponse,
     MeetingResponse,
     MeetingUpdate,
+    TranscriptUpdate,
     TranscriptReplace,
     UserResponse,
 )
@@ -200,6 +201,15 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
 def get_transcript(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     _owned(meeting_id, user)
     return {"meeting_id": meeting_id, "segments": meeting_store.get_meeting_transcript(meeting_id)}
+
+
+@router.put("/{meeting_id}/transcript")
+def update_transcript(meeting_id: str, body: TranscriptUpdate, user: UserResponse = Depends(current_user)) -> dict:
+    """Бичвэрийн сегментүүдийг засварлах."""
+    _owned(meeting_id, user)
+    updates = [s.model_dump(exclude_none=True) for s in body.segments]
+    transcript = meeting_store.update_transcript_segments(meeting_id, updates)
+    return {"meeting_id": meeting_id, "segments": transcript}
 
 
 @router.post("/{meeting_id}/transcript/replace")
