@@ -259,6 +259,42 @@ def update_meeting_minutes(meeting_id: str, minutes: dict) -> None:
         s.execute(update(Meeting).where(Meeting.id == meeting_id).values(minutes=minutes, updated_at=_now()))
 
 
+class TranscriptBusyError(Exception):
+    """Боловсруулж байх үед бичвэрийг засахгүй (боловсруулалт дарж бичнэ)."""
+
+
+def replace_in_meeting(
+    meeting_id: str,
+    find: str,
+    replacement: str,
+    whole_word: bool = True,
+    case_sensitive: bool = False,
+    include_minutes: bool = True,
+) -> dict:
+    """Бичвэр (мөн хүсвэл тэмдэглэл)-д find-ийг бүх газарт нь replacement болгоно."""
+    from app.services.text_replace import build_pattern, replace_in_obj, replace_in_segments
+
+    pattern = build_pattern(find, whole_word, case_sensitive)
+    with session_scope() as s:
+        m = s.get(Meeting, meeting_id, with_for_update=True)
+        if not m:
+            return {"replaced": 0, "minutes_replaced": 0, "segments": []}
+        if m.status == MeetingStatus.PROCESSING.value:
+            raise TranscriptBusyError()
+        segments, replaced = replace_in_segments(list(m.transcript or []), pattern, replacement)
+        values: dict = {}
+        if replaced:
+            values["transcript"] = segments
+        minutes_replaced = 0
+        if include_minutes and m.minutes:
+            minutes, minutes_replaced = replace_in_obj(dict(m.minutes), pattern, replacement)
+            if minutes_replaced:
+                values["minutes"] = minutes
+        if values:
+            s.execute(update(Meeting).where(Meeting.id == meeting_id).values(**values, updated_at=_now()))
+        return {"replaced": replaced, "minutes_replaced": minutes_replaced, "segments": segments}
+
+
 def get_meeting_minutes(meeting_id: str) -> Optional[dict]:
     with session_scope() as s:
         m = s.get(Meeting, meeting_id)

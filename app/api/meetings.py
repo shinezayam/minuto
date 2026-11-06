@@ -14,6 +14,7 @@ from app.models.schemas import (
     MeetingListResponse,
     MeetingResponse,
     MeetingUpdate,
+    TranscriptReplace,
     UserResponse,
 )
 from app.services import live_transcriber, meeting_store, processing
@@ -183,6 +184,24 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
 def get_transcript(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     _owned(meeting_id, user)
     return {"meeting_id": meeting_id, "segments": meeting_store.get_meeting_transcript(meeting_id)}
+
+
+@router.post("/{meeting_id}/transcript/replace")
+def replace_in_transcript(meeting_id: str, body: TranscriptReplace, user: UserResponse = Depends(current_user)) -> dict:
+    """Буруу танигдсан үгийг бичвэр (include_minutes үед тэмдэглэл)-ийн бүх газарт солино."""
+    _owned(meeting_id, user)
+    try:
+        result = meeting_store.replace_in_meeting(
+            meeting_id,
+            body.find,
+            body.replace,
+            whole_word=body.whole_word,
+            case_sensitive=body.case_sensitive,
+            include_minutes=body.include_minutes,
+        )
+    except meeting_store.TranscriptBusyError:
+        raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Боловсруулж дуусахыг хүлээнэ үү")
+    return {"meeting_id": meeting_id, **result}
 
 
 @router.get("/{meeting_id}/minutes")

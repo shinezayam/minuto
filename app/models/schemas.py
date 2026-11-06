@@ -31,6 +31,15 @@ class MeetingUpdate(BaseModel):
     participants: Optional[List[ParticipantName]] = Field(default=None, max_length=50)
 
 
+class TranscriptReplace(BaseModel):
+    """Бичвэрт нэг үгийг бүх газарт нь солих."""
+    find: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    replace: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]
+    whole_word: bool = True
+    case_sensitive: bool = False
+    include_minutes: bool = True
+
+
 class MeetingResponse(BaseModel):
     id: str
     title: str
