@@ -96,12 +96,23 @@ def get_meeting(meeting_id: str, owner_id: Optional[str] = None) -> Optional[Mee
         return _to_response(m) if m else None
 
 
-def list_meetings(owner_id: str) -> list[MeetingResponse]:
+def list_meetings(owner_id: str, include_archived: bool = False) -> list[MeetingResponse]:
     with session_scope() as s:
-        rows = s.scalars(
-            select(Meeting).where(Meeting.owner_id == owner_id).order_by(Meeting.created_at.desc())
-        ).all()
+        query = select(Meeting).where(Meeting.owner_id == owner_id)
+        if not include_archived:
+            query = query.where(Meeting.archived == 0)
+        rows = s.scalars(query.order_by(Meeting.created_at.desc())).all()
         return [_to_response(m) for m in rows]
+
+
+def archive_meeting(meeting_id: str, owner_id: str, archive: bool = True) -> Optional[MeetingResponse]:
+    with session_scope() as s:
+        m = _get(s, meeting_id, owner_id)
+        if not m:
+            return None
+        m.archived = 1 if archive else 0
+        m.updated_at = _now()
+        return _to_response(m)
 
 
 def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optional[MeetingResponse]:

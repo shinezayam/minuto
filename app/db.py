@@ -65,6 +65,8 @@ class Meeting(Base):
     minutes: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # Хурлын оролцогчдын нэрс (хэрэглэгч оруулсан)
     participants: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Архивласан эсэх (soft delete)
+    archived: Mapped[bool] = mapped_column(Integer, default=0)
 
 
 class Contact(Base):
@@ -118,6 +120,7 @@ def configure(url: Optional[str] = None) -> Engine:
 _ADDED_COLUMNS = [
     ("users", "name", "VARCHAR(100)"),
     ("meetings", "participants", "JSON"),
+    ("meetings", "archived", "INTEGER DEFAULT 0"),
 ]
 
 

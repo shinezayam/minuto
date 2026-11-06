@@ -5,7 +5,7 @@ import io
 import mimetypes
 import shutil
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.models.minutes import MeetingMinutes
@@ -57,8 +57,8 @@ def create_meeting(body: MeetingCreate, user: UserResponse = Depends(current_use
 
 
 @router.get("", response_model=MeetingListResponse)
-def list_meetings(user: UserResponse = Depends(current_user)) -> MeetingListResponse:
-    return MeetingListResponse(meetings=meeting_store.list_meetings(user.id))
+def list_meetings(include_archived: bool = Query(False), user: UserResponse = Depends(current_user)) -> MeetingListResponse:
+    return MeetingListResponse(meetings=meeting_store.list_meetings(user.id, include_archived=include_archived))
 
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
@@ -117,6 +117,22 @@ async def delete_meeting(meeting_id: str, user: UserResponse = Depends(current_u
     await live_transcriber.stop(meeting_id)
     # Хурлыг устгахад аудио бичлэг ч устна
     shutil.rmtree(processing.meeting_dir(meeting_id), ignore_errors=True)
+
+
+@router.post("/{meeting_id}/archive", response_model=MeetingResponse)
+def archive_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.archive_meeting(meeting_id, user.id, archive=True)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return meeting
+
+
+@router.post("/{meeting_id}/unarchive", response_model=MeetingResponse)
+def unarchive_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.archive_meeting(meeting_id, user.id, archive=False)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return meeting
 
 
 @router.post("/{meeting_id}/upload", status_code=200)
