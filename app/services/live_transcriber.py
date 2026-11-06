@@ -25,6 +25,7 @@ from typing import Awaitable, Callable, Dict, List, Optional, Set
 
 from app.config import settings
 from app.services import asr as asr_mod
+from app.services import vocabulary
 from app.services.audio_utils import ffmpeg_exe
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,8 @@ class LiveTranscriber:
         self._closed = False
         self._last_activity = time.monotonic()
         self._task: Optional[asyncio.Task] = None
+        self._asr_context = asr_mod.NO_CONTEXT
+        self._corrections: List[tuple[str, str]] = []
 
     # ---------- аудио оруулах ----------
 
@@ -196,6 +199,13 @@ class LiveTranscriber:
     async def _worker(self) -> None:
         provider = asr_mod.asr_provider
         try:
+            vocab = await asyncio.to_thread(vocabulary.for_meeting, self.meeting_id)
+        except Exception:  # noqa: BLE001 — толь бичиггүй ч шууд бичвэр ажиллана
+            logger.exception("meeting %s: vocabulary load failed", self.meeting_id)
+            vocab = vocabulary.MeetingVocabulary()
+        self._asr_context = asr_mod.ASRContext(hints=vocab.hints, topic=vocab.topic)
+        self._corrections = vocab.corrections
+        try:
             while not self._closed:
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=1.0)
@@ -229,7 +239,9 @@ class LiveTranscriber:
         start_ms = start_sample * 1000 // SAMPLE_RATE
         end_ms = start_ms + (len(pcm) // 2) * 1000 // SAMPLE_RATE
         try:
-            text = await provider.transcribe_wav_bytes(pcm_to_wav(pcm))  # type: ignore[attr-defined]
+            text = await provider.transcribe_wav_bytes(pcm_to_wav(pcm), context=self._asr_context)  # type: ignore[attr-defined]
+            if self._corrections:
+                text = vocabulary.apply_to_text(text, self._corrections)
         except Exception as e:  # noqa: BLE001 — шууд бичвэрийн алдаа бичлэгийг зогсоохгүй
             logger.warning("meeting %s: live ASR failed: %s", self.meeting_id, e)
             await self._broadcast({"type": "transcript.error", "message": "Шууд бичвэр түр гарахгүй байна"})

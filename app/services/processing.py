@@ -12,7 +12,8 @@ from typing import Set
 from app.config import settings
 from app.services import asr as asr_mod
 from app.services import llm as llm_mod
-from app.services import meeting_store
+from app.models.minutes import TranscriptSegment
+from app.services import meeting_store, vocabulary
 from app.services.asr import ProviderError
 from app.services.audio_utils import find_meeting_audio
 from app.services.speakers import apply_speaker_map
@@ -41,12 +42,20 @@ async def run(meeting_id: str) -> None:
             return
 
         meeting_store.set_progress(meeting_id, "transcribing", 0, 0)
+        vocab = await asyncio.to_thread(vocabulary.for_meeting, meeting_id)
         transcript = await asr_mod.asr_provider.transcribe(
             str(audio),
             on_progress=lambda done, total: meeting_store.set_progress(meeting_id, "transcribing", done, total),
+            context=asr_mod.ASRContext(hints=vocab.hints, topic=vocab.topic),
         )
-        # Тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр (хэсэг доторх яригчтай) алга болохгүй
         transcript = apply_speaker_map(transcript, {})
+        if vocab.corrections:
+            # Хэрэглэгчийн өмнө нь хийсэн засваруудыг ("Үг засах") шинэ бичвэрт хэрэгжүүлнэ
+            fixed, n = vocabulary.apply_to_segments([s.model_dump() for s in transcript], vocab.corrections)
+            if n:
+                logger.info("Meeting %s: applied %d vocabulary corrections", meeting_id, n)
+                transcript = [TranscriptSegment(**s) for s in fixed]
+        # Тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр (хэсэг доторх яригчтай) алга болохгүй
         meeting_store.update_meeting_transcript(meeting_id, [s.model_dump() for s in transcript])
         if not transcript:
             meeting_store.finish_processing(meeting_id, "NO_SPEECH: Бичлэгээс яриа танигдсангүй")

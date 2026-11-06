@@ -82,6 +82,20 @@ class Contact(Base):
     last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class VocabularyTerm(Base):
+    """Хэрэглэгчийн толь бичиг: ASR-д зөв бичихэд туслах үг, мөн (wrong байвал) автомат засвар."""
+
+    __tablename__ = "vocabulary_terms"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    term: Mapped[str] = mapped_column(String(200))
+    # Буруу танигддаг хэлбэр. Байвал шинэ бичвэрт автоматаар term болгож засна.
+    wrong: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine: Optional[Engine] = None
 _SessionLocal: Optional[sessionmaker] = None
 

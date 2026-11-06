@@ -18,7 +18,7 @@ from app.models.schemas import (
     TranscriptReplace,
     UserResponse,
 )
-from app.services import live_transcriber, meeting_store, processing
+from app.services import live_transcriber, meeting_store, processing, vocabulary
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services.auth import current_user
 
@@ -227,7 +227,11 @@ def replace_in_transcript(meeting_id: str, body: TranscriptReplace, user: UserRe
         )
     except meeting_store.TranscriptBusyError:
         raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Боловсруулж дуусахыг хүлээнэ үү")
-    return {"meeting_id": meeting_id, **result}
+    remembered = False
+    if body.remember and body.replace and (result["replaced"] or result["minutes_replaced"]):
+        vocabulary.remember_correction(user.id, body.find, body.replace)
+        remembered = True
+    return {"meeting_id": meeting_id, **result, "remembered": remembered}
 
 
 @router.get("/{meeting_id}/minutes")

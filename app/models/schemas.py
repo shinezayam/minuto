@@ -38,6 +38,8 @@ class TranscriptReplace(BaseModel):
     whole_word: bool = True
     case_sensitive: bool = False
     include_minutes: bool = True
+    # Засварыг толь бичигт хадгалж, дараагийн хурлуудад автоматаар засна
+    remember: bool = True
 
 
 class TranscriptSegmentUpdate(BaseModel):
@@ -101,6 +103,24 @@ class ContactResponse(BaseModel):
 
 class ContactListResponse(BaseModel):
     contacts: List[ContactResponse]
+
+
+VocabText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
+class VocabularyCreate(BaseModel):
+    term: VocabText
+    wrong: Optional[VocabText] = None
+
+
+class VocabularyTerm(BaseModel):
+    id: str
+    term: str
+    wrong: Optional[str] = None
+
+
+class VocabularyListResponse(BaseModel):
+    terms: List[VocabularyTerm]
 
 
 class AuthResponse(BaseModel):

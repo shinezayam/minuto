@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Protocol
 
 import httpx
@@ -24,16 +25,29 @@ class ProviderError(Exception):
 ProgressCallback = Optional[Callable[[int, int], None]]
 
 
+@dataclass(frozen=True)
+class ASRContext:
+    """ASR-д урьдчилан өгөх мэдээлэл: оролцогчдын нэр, хэрэглэгчийн толь бичгийн үгс, хурлын сэдэв."""
+
+    hints: List[str] = field(default_factory=list)
+    topic: Optional[str] = None
+
+
+NO_CONTEXT = ASRContext()
+
+
 class ASRProvider(Protocol):
     name: str
 
-    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]: ...
+    async def transcribe(
+        self, audio_path: str, on_progress: ProgressCallback = None, context: ASRContext = NO_CONTEXT
+    ) -> List[TranscriptSegment]: ...
 
 
 class LiveASRProvider(Protocol):
     """Хурлын үеэр богино (10-25 сек) wav хэсгийг шууд текст болгож чаддаг provider."""
 
-    async def transcribe_wav_bytes(self, wav: bytes) -> str: ...
+    async def transcribe_wav_bytes(self, wav: bytes, context: ASRContext = NO_CONTEXT) -> str: ...
 
 
 def supports_live(provider: object) -> bool:
@@ -45,7 +59,9 @@ class MockASRProvider:
 
     name = "demo"
 
-    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]:
+    async def transcribe(
+        self, audio_path: str, on_progress: ProgressCallback = None, context: ASRContext = NO_CONTEXT
+    ) -> List[TranscriptSegment]:
         if on_progress:
             on_progress(1, 1)
         return [
@@ -57,7 +73,7 @@ class MockASRProvider:
             ),
         ]
 
-    async def transcribe_wav_bytes(self, wav: bytes) -> str:
+    async def transcribe_wav_bytes(self, wav: bytes, context: ASRContext = NO_CONTEXT) -> str:
         return "[ДЕМО] шууд бичвэр"
 
 
@@ -71,6 +87,20 @@ OMNI_PROMPT = (
 )
 
 
+def build_omni_prompt(context: ASRContext) -> str:
+    """Үндсэн заавар + (байвал) хурлын сэдэв ба гарч болох нэр, үгс."""
+    extra = []
+    if context.topic:
+        extra.append(f"Хурлын сэдэв: {context.topic}.")
+    if context.hints:
+        extra.append(
+            "Энэ хуралд гарч болох нэр, үгс: "
+            + ", ".join(context.hints)
+            + ". Эдгээр үг сонсогдвол яг энэ бичлэгээр бич. Сонсогдоогүй үгийг бүү нэм."
+        )
+    return OMNI_PROMPT if not extra else OMNI_PROMPT + " " + " ".join(extra)
+
+
 class QwenOmniASRProvider:
     """Qwen-Omni (DashScope OpenAI-compatible API)-аар аудиог текст болгоно."""
 
@@ -80,8 +110,11 @@ class QwenOmniASRProvider:
         if not settings.qwen_api_key:
             raise RuntimeError("ASR_PROVIDER=omni боловч QWEN_API_KEY тохируулаагүй байна")
 
-    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]:
+    async def transcribe(
+        self, audio_path: str, on_progress: ProgressCallback = None, context: ASRContext = NO_CONTEXT
+    ) -> List[TranscriptSegment]:
         src = Path(audio_path)
+        prompt = build_omni_prompt(context)
         parts = await split_to_wav(src, src.parent / "_asr_parts", settings.omni_chunk_sec)
         if not parts:
             raise ValueError("Аудио хоосон байна")
@@ -97,7 +130,7 @@ class QwenOmniASRProvider:
             async def one(i: int, part: Path) -> TranscriptSegment:
                 nonlocal done
                 async with sem:
-                    text = await self._transcribe_chunk(client, part)
+                    text = await self._transcribe_bytes(client, part.read_bytes(), prompt)
                 done += 1
                 if on_progress:
                     on_progress(done, len(parts))
@@ -113,14 +146,11 @@ class QwenOmniASRProvider:
 
         return [s for s in segments if s.text]
 
-    async def transcribe_wav_bytes(self, wav: bytes) -> str:
+    async def transcribe_wav_bytes(self, wav: bytes, context: ASRContext = NO_CONTEXT) -> str:
         async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
-            return await self._transcribe_bytes(client, wav)
+            return await self._transcribe_bytes(client, wav, build_omni_prompt(context))
 
-    async def _transcribe_chunk(self, client: httpx.AsyncClient, wav: Path) -> str:
-        return await self._transcribe_bytes(client, wav.read_bytes())
-
-    async def _transcribe_bytes(self, client: httpx.AsyncClient, wav: bytes) -> str:
+    async def _transcribe_bytes(self, client: httpx.AsyncClient, wav: bytes, prompt: str = OMNI_PROMPT) -> str:
         b64 = base64.b64encode(wav).decode("ascii")
         body = {
             "model": settings.omni_model,
@@ -133,7 +163,7 @@ class QwenOmniASRProvider:
                     "role": "user",
                     "content": [
                         {"type": "input_audio", "input_audio": {"data": f"data:;base64,{b64}", "format": "wav"}},
-                        {"type": "text", "text": OMNI_PROMPT},
+                        {"type": "text", "text": prompt},
                     ],
                 }
             ],
@@ -205,8 +235,12 @@ class WhisperASRProvider:
             logger.info("Whisper model loaded on %s", self.model.device)
         return self.model
 
-    def _transcribe_sync(self, audio_path: str) -> List[TranscriptSegment]:
-        result = self._load_model().transcribe(audio_path, task="transcribe", verbose=False, fp16=False)
+    def _transcribe_sync(self, audio_path: str, context: ASRContext = NO_CONTEXT) -> List[TranscriptSegment]:
+        kwargs = {}
+        if context.hints or context.topic:
+            # Whisper-ийн initial_prompt нь үгсийн бичлэгийг чиглүүлдэг (заавар биш, жишээ текст)
+            kwargs["initial_prompt"] = ", ".join([*([context.topic] if context.topic else []), *context.hints])
+        result = self._load_model().transcribe(audio_path, task="transcribe", verbose=False, fp16=False, **kwargs)
         logger.info("Whisper detected language: %s", result.get("language", "unknown"))
         segments = []
         for i, seg in enumerate(result["segments"]):
@@ -222,12 +256,14 @@ class WhisperASRProvider:
                 )
         return segments
 
-    async def transcribe(self, audio_path: str, on_progress: ProgressCallback = None) -> List[TranscriptSegment]:
+    async def transcribe(
+        self, audio_path: str, on_progress: ProgressCallback = None, context: ASRContext = NO_CONTEXT
+    ) -> List[TranscriptSegment]:
         try:
             if on_progress:
                 on_progress(0, 1)
             # Whisper нь CPU-г удаан эзэлдэг тул event loop-ийг блоклохгүйн тулд thread-д ажиллуулна
-            segments = await asyncio.to_thread(self._transcribe_sync, audio_path)
+            segments = await asyncio.to_thread(self._transcribe_sync, audio_path, context)
             if on_progress:
                 on_progress(1, 1)
             return segments

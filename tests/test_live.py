@@ -29,10 +29,10 @@ class _RecordingASR:
     def __init__(self) -> None:
         self.calls: list[int] = []
 
-    async def transcribe(self, audio_path, on_progress=None):  # pragma: no cover — шууд бичвэрт хэрэглэхгүй
+    async def transcribe(self, audio_path, on_progress=None, context=None):  # pragma: no cover — шууд бичвэрт хэрэглэхгүй
         return []
 
-    async def transcribe_wav_bytes(self, wav: bytes) -> str:
+    async def transcribe_wav_bytes(self, wav: bytes, context=None) -> str:
         self.calls.append(len(wav))
         return f"хэсэг {len(self.calls)}"
 
