@@ -181,6 +181,35 @@ async def upload_audio(
     }
 
 
+@router.post("/{meeting_id}/regenerate-summary", status_code=202)
+async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    """Зөвхөн summary-г дахин үүсгэнэ (бүх meeting minutes биш)."""
+    meeting = _owned(meeting_id, user)
+    transcript_data = meeting_store.get_meeting_transcript(meeting_id)
+    if not transcript_data:
+        raise HTTPException(status_code=400, detail="NO_TRANSCRIPT: Бичвэр олдсонгүй")
+    
+    from app.models.minutes import TranscriptSegment
+    from app.services import llm as llm_mod
+    
+    transcript = [TranscriptSegment(**seg) for seg in transcript_data]
+    participants = meeting.participants or []
+    
+    try:
+        # Шинэ summary үүсгэх
+        minutes = await llm_mod.llm_provider.generate_minutes(transcript, participants)
+        
+        # Одоогийн minutes-аас summary-г шинэчлэх
+        current_minutes = meeting_store.get_meeting_minutes(meeting_id)
+        if current_minutes:
+            current_minutes["summary"] = minutes.summary
+            meeting_store.update_meeting_minutes(meeting_id, current_minutes)
+        
+        return {"meeting_id": meeting_id, "summary": minutes.summary}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SUMMARY_FAILED: {e}")
+
+
 @router.post("/{meeting_id}/process", status_code=202)
 async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     """
