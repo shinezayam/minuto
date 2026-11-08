@@ -9,6 +9,7 @@ httpx==0.28.1
 pytest==8.4.1
 pytest-asyncio==1.0.0
 python-docx==1.2.0
+fpdf2==2.8.2
 imageio-ffmpeg==0.5.1
 SQLAlchemy==2.0.55
 psycopg[binary]==3.2.13

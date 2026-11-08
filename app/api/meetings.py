@@ -327,3 +327,27 @@ def export_docx(meeting_id: str, user: UserResponse = Depends(current_user)):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename=meeting_{meeting_id}.docx"},
     )
+
+
+@router.get("/{meeting_id}/export.pdf")
+def export_pdf(meeting_id: str, user: UserResponse = Depends(current_user)):
+    meeting = _owned(meeting_id, user)
+    minutes_data = meeting_store.get_meeting_minutes(meeting_id)
+    if not minutes_data:
+        raise HTTPException(status_code=404, detail="Minutes not generated yet")
+
+    from app.services.export_pdf import generate_meeting_pdf
+
+    pdf_bytes = generate_meeting_pdf(
+        meeting_id=meeting_id,
+        title=meeting.title,
+        created_at=str(meeting.created_at),
+        minutes=MeetingMinutes(**{**minutes_data, "prepared_by": _prepared_by(user)}),
+        transcript=meeting_store.get_meeting_transcript(meeting_id),
+        participants=meeting.participants,
+    )
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=meeting_{meeting_id}.pdf"},
+    )
