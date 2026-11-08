@@ -21,7 +21,16 @@ async def ask(body: AskRequest, user: UserResponse = Depends(current_user)) -> A
     if body.meeting_id and not meeting_store.get_meeting(body.meeting_id, user.id):
         raise HTTPException(status_code=404, detail="Meeting not found")
     try:
-        return await ask_service.ask(user.id, body.question.strip(), body.meeting_id, body.history)
+        return await ask_service.ask(
+            user.id,
+            body.question.strip(),
+            body.meeting_id,
+            body.history,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            meeting_ids=body.meeting_ids,
+            participant=body.participant,
+        )
     except ProviderError as e:
         logger.warning("ask failed: %s", e)
         raise HTTPException(status_code=502, detail="ASK_FAILED: AI хариулт өгч чадсангүй. Дахин оролдоно уу.") from e

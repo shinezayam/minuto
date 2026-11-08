@@ -343,12 +343,50 @@ def get_meeting_minutes(meeting_id: str) -> Optional[dict]:
         return dict(m.minutes) if m and m.minutes else None
 
 
-def list_meeting_contents(owner_id: str, meeting_id: Optional[str] = None) -> list[dict]:
+def list_meeting_contents(
+    owner_id: str,
+    meeting_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    meeting_ids: Optional[list[str]] = None,
+    participant: Optional[str] = None,
+) -> list[dict]:
     """Ask Minuto-д: бичвэртэй хурлуудын бичвэр, тэмдэглэл (шинэ нь эхэндээ)."""
+    from datetime import datetime
     with session_scope() as s:
         q = select(Meeting).where(Meeting.owner_id == owner_id, Meeting.transcript.is_not(None))
         if meeting_id is not None:
             q = q.where(Meeting.id == meeting_id)
+        if meeting_ids:
+            q = q.where(Meeting.id.in_(meeting_ids))
+        if date_from:
+            try:
+                dt_from = datetime.fromisoformat(date_from)
+                q = q.where(Meeting.created_at >= dt_from)
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+                q = q.where(Meeting.created_at <= dt_to)
+            except ValueError:
+                pass
+        if participant:
+            # JSON array-аас оролцогч олох
+            q = q.where(Meeting.participants.is_not(None))
+            rows = s.scalars(q.order_by(Meeting.created_at.desc())).all()
+            # Python дээр шүүх (JSON contains)
+            rows = [m for m in rows if m.participants and participant in m.participants]
+            return [
+                {
+                    "id": m.id,
+                    "title": m.title,
+                    "created_at": m.created_at,
+                    "transcript": list(m.transcript or []),
+                    "minutes": dict(m.minutes) if m.minutes else None,
+                }
+                for m in rows
+            ]
         rows = s.scalars(q.order_by(Meeting.created_at.desc())).all()
         return [
             {

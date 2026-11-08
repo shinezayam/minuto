@@ -194,6 +194,11 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     # Байхгүй бол хэрэглэгчийн бүх хурлаас хайна
     meeting_id: Optional[str] = None
+    # Шүүлтүүрүүд
+    date_from: Optional[str] = None  # YYYY-MM-DD
+    date_to: Optional[str] = None  # YYYY-MM-DD
+    meeting_ids: Optional[List[str]] = None  # Тодорхой хурлуудаас хайх
+    participant: Optional[str] = None  # Оролцогчоор шүүх
     history: List[AskMessage] = Field(default_factory=list, max_length=20)
 
 

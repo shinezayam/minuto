@@ -82,10 +82,24 @@ def _ts(ms: int) -> str:
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60:02d}:{s % 60:02d}"
 
 
-def _load_docs(owner_id: str, meeting_id: Optional[str]) -> List[_MeetingDoc]:
+def _load_docs(
+    owner_id: str,
+    meeting_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    meeting_ids: Optional[list[str]] = None,
+    participant: Optional[str] = None,
+) -> List[_MeetingDoc]:
     docs: List[_MeetingDoc] = []
     counter = 0
-    for row in meeting_store.list_meeting_contents(owner_id, meeting_id):
+    for row in meeting_store.list_meeting_contents(
+        owner_id,
+        meeting_id,
+        date_from=date_from,
+        date_to=date_to,
+        meeting_ids=meeting_ids,
+        participant=participant,
+    ):
         segs = []
         for s in row["transcript"]:
             text = (s.get("text") or "").strip()
@@ -209,8 +223,24 @@ def _demo_answer(query: str, offered: List[_Seg]) -> dict:
     }
 
 
-async def ask(owner_id: str, question: str, meeting_id: Optional[str], history: List[AskMessage]) -> AskResponse:
-    docs = _load_docs(owner_id, meeting_id)
+async def ask(
+    owner_id: str,
+    question: str,
+    meeting_id: Optional[str],
+    history: List[AskMessage],
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    meeting_ids: Optional[list[str]] = None,
+    participant: Optional[str] = None,
+) -> AskResponse:
+    docs = _load_docs(
+        owner_id,
+        meeting_id,
+        date_from=date_from,
+        date_to=date_to,
+        meeting_ids=meeting_ids,
+        participant=participant,
+    )
     if not docs:
         return AskResponse(answer="Асуулт асуух бичвэртэй хурал алга байна. Эхлээд хурлаа бичиж боловсруулна уу.",
                            citations=[], meetings_searched=0)
