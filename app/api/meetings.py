@@ -210,6 +210,22 @@ async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(curre
         raise HTTPException(status_code=500, detail=f"SUMMARY_FAILED: {e}")
 
 
+@router.put("/{meeting_id}/action-items")
+def update_action_items(meeting_id: str, body: dict, user: UserResponse = Depends(current_user)) -> dict:
+    """Action items-г update хийх."""
+    _owned(meeting_id, user)
+    current_minutes = meeting_store.get_meeting_minutes(meeting_id)
+    if not current_minutes:
+        raise HTTPException(status_code=404, detail="Meeting minutes not found")
+    
+    # Action items-г шинэчлэх
+    if "action_items" in body:
+        current_minutes["action_items"] = body["action_items"]
+        meeting_store.update_meeting_minutes(meeting_id, current_minutes)
+    
+    return {"meeting_id": meeting_id, "action_items": current_minutes.get("action_items", [])}
+
+
 @router.post("/{meeting_id}/process", status_code=202)
 async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     """
