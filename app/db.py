@@ -67,6 +67,8 @@ class Meeting(Base):
     participants: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # Архивласан эсэх (soft delete)
     archived: Mapped[bool] = mapped_column(Integer, default=0)
+    # Ашигласан загвар
+    template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
 
 
 class Contact(Base):
@@ -92,6 +94,27 @@ class VocabularyTerm(Base):
     term: Mapped[str] = mapped_column(String(200))
     # Буруу танигддаг хэлбэр. Байвал шинэ бичвэрт автоматаар term болгож засна.
     wrong: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class MeetingTemplate(Base):
+    """Хурлын загвар - урьдчилан тодорхойлсон бүтэц, prompt."""
+
+    __tablename__ = "meeting_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
+    # Хэрэглэгчийн загвар бол owner_id байна. Default загвар бол NULL (system-level).
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon: Mapped[str] = mapped_column(String(10), default="📋")  # emoji
+    # Аль хэсгүүдийг үүсгэх: ["summary", "topics", "decisions", "action_items", "open_questions"]
+    sections: Mapped[list] = mapped_column(JSON, default=lambda: ["summary", "topics", "decisions", "action_items"])
+    # LLM-д өгөх нэмэлт заавар
+    custom_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Default загвар эсэх
+    is_default: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -135,6 +158,7 @@ _ADDED_COLUMNS = [
     ("users", "name", "VARCHAR(100)"),
     ("meetings", "participants", "JSON"),
     ("meetings", "archived", "INTEGER DEFAULT 0"),
+    ("meetings", "template_id", "VARCHAR(36)"),
 ]
 
 

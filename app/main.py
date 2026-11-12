@@ -14,6 +14,7 @@ from app.api.ask import router as ask_router
 from app.api.auth import router as auth_router
 from app.api.contacts import router as contacts_router
 from app.api.meetings import router as meetings_router
+from app.api.templates import router as templates_router
 from app.api.vocabulary import router as vocabulary_router
 from app.api.websocket import router as websocket_router
 from app.services import live_transcriber, meeting_store
@@ -54,6 +55,7 @@ app.include_router(websocket_router)
 app.include_router(ask_router)
 app.include_router(contacts_router)
 app.include_router(vocabulary_router)
+app.include_router(templates_router)
 
 
 @app.get("/api/health", response_model=HealthResponse)
