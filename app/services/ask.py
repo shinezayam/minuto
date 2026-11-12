@@ -65,16 +65,89 @@ class _MeetingDoc:
     segments: List[_Seg]
 
 
-# ---------- хайлт ----------
+# ---------- Hybrid Search ----------
 
-def _stems(text: str) -> set[str]:
-    """Монгол үгийн нөхцөл дагавар олон тул эхний 5 үсгээр нь харьцуулна."""
+# Монгол хэлний нөхцөл дагавар (stemming)
+_MN_SUFFIXES = [
+    # Case endings
+    "аас", "ээс", "оос", "өөс",  # ablative
+    "тай", "тэй",  # comitative
+    "руу", "рүү",  # directive
+    "ын", "ийн",  # genitive
+    "д", "т",  # dative-locative
+    # Possessive
+    "маа", "мээ", "моо", "мөө",
+    "гаа", "гээ", "гоо", "гөө",
+    # Accusative
+    "ааг", "ээг", "оог", "өөг",
+    # Verb endings
+    "лаа", "лээ", "лоо", "лөө",
+    "сан", "сэн", "сон", "сөн",
+    "даг", "дэг", "дог", "дөг",
+    "на", "нэ", "но", "нө",
+]
+
+# Synonym dictionary (business terms)
+_SYNONYMS = {
+    "хурал": ["уулзалт", "йилдэл", "хэлэлцүүлэг"],
+    "шийдвэр": ["тогтоол", "шийд", "шийтгэл"],
+    "даалгавар": ["үүрэг", "ажил", "task", "assignment"],
+    "мөнгө": ["санхүү", "бюджет", "зардал", "орлого"],
+    "хугацаа": ["deadline", "хугацаа", "өнөөдөр", "маргааш"],
+    "баг": ["team", "хамт олон", "хэлтэс"],
+    "захирал": ["CEO", "директор", "менежер"],
+}
+
+def _mongolian_stem(word: str) -> str:
+    """Монгол үгийн нөхцөлийг авах"""
+    word = word.lower()
+    for suffix in _MN_SUFFIXES:
+        if word.endswith(suffix) and len(word) > len(suffix) + 2:
+            return word[:-len(suffix)]
+    return word
+
+def _expand_synonyms(word: str) -> set[str]:
+    """Үгийн синонимүүдийг буцаах"""
+    word = word.lower()
+    result = {word}
+    for key, synonyms in _SYNONYMS.items():
+        if word == key or word in synonyms:
+            result.add(key)
+            result.update(synonyms)
+    return result
+
+def _hybrid_stems(text: str) -> set[str]:
+    """Hybrid stemming: Mongolian stems + synonyms"""
     out = set()
     for w in re.findall(r"\w+", text.lower()):
         if len(w) < 2 or w in _STOPWORDS:
             continue
-        out.add(w[:5])
+        # Mongolian stemming
+        stem = _mongolian_stem(w)
+        out.add(stem)
+        # Synonym expansion
+        out.update(_expand_synonyms(stem))
     return out
+
+# Backward compatibility
+_stems = _hybrid_stems
+
+def _calculate_score(query_stems: set[str], text_stems: set[str]) -> float:
+    """BM25-inspired scoring"""
+    if not query_stems:
+        return 0.0
+    
+    # Overlap count
+    overlap = len(query_stems & text_stems)
+    
+    # Coverage (what % of query terms found)
+    coverage = overlap / len(query_stems) if query_stems else 0
+    
+    # Density (how concentrated the matches are)
+    density = overlap / len(text_stems) if text_stems else 0
+    
+    # Combined score
+    return coverage * 2.0 + density * 0.5
 
 
 def _ts(ms: int) -> str:
