@@ -226,6 +226,38 @@ def update_action_items(meeting_id: str, body: dict, user: UserResponse = Depend
     return {"meeting_id": meeting_id, "action_items": current_minutes.get("action_items", [])}
 
 
+@router.post("/{meeting_id}/topics")
+async def generate_topics(meeting_id: str, user: UserResponse = Depends(current_user)):
+    """Бичвэрийг сэдвүүдэд хуваана"""
+    meeting = meeting_store.get_meeting(meeting_id, user.id)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    
+    transcript = meeting_store.get_meeting_transcript(meeting_id)
+    if not transcript:
+        raise HTTPException(status_code=400, detail="No transcript available")
+    
+    from app.models.minutes import TranscriptSegment
+    from app.services.topic_segmentation import segment_topics
+    
+    segments = [TranscriptSegment(**s) for s in transcript]
+    topics = await segment_topics(segments)
+    
+    return {
+        "meeting_id": meeting_id,
+        "topics": [
+            {
+                "title": t.title,
+                "description": t.description,
+                "start_ms": t.start_ms,
+                "end_ms": t.end_ms,
+                "segment_ids": t.segment_ids,
+            }
+            for t in topics
+        ]
+    }
+
+
 @router.post("/{meeting_id}/process", status_code=202)
 async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     """
