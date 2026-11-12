@@ -69,6 +69,9 @@ class Meeting(Base):
     archived: Mapped[bool] = mapped_column(Integer, default=0)
     # Ашигласан загвар
     template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # Workspace болон Project холбоос
+    workspace_id: Mapped[Optional[str]] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id: Mapped[Optional[str]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class Contact(Base):
@@ -119,6 +122,50 @@ class MeetingTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class Workspace(Base):
+    """Workspace - хэрэглэгчийн хувийн эсвэл багийн ажлын орон зай."""
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # personal эсвэл organization
+    workspace_type: Mapped[str] = mapped_column(String(20), default="personal")
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class WorkspaceMember(Base):
+    """Workspace-ийн гишүүд - role-based access."""
+
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # owner, admin, editor, viewer
+    role: Mapped[str] = mapped_column(String(20), default="viewer")
+    invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    joined_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Project(Base):
+    """Project/Folder - хурлуудыг бүлэглэх."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    color: Mapped[str] = mapped_column(String(7), default="#5965D8")  # hex color
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine: Optional[Engine] = None
 _SessionLocal: Optional[sessionmaker] = None
 
@@ -159,6 +206,8 @@ _ADDED_COLUMNS = [
     ("meetings", "participants", "JSON"),
     ("meetings", "archived", "INTEGER DEFAULT 0"),
     ("meetings", "template_id", "VARCHAR(36)"),
+    ("meetings", "workspace_id", "VARCHAR(36)"),
+    ("meetings", "project_id", "VARCHAR(36)"),
 ]
 
 
