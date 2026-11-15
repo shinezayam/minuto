@@ -24,6 +24,8 @@ class MeetingCreate(BaseModel):
     title: str = Field(default="Шинэ хурал", max_length=200)
     language: str = Field(default="mn", max_length=5)
     participants: List[ParticipantName] = Field(default_factory=list, max_length=50)
+    # Хурлын загвар (default эсвэл өөрийн) — тэмдэглэлийн хэсэг, зааварыг тодорхойлно
+    template_id: Optional[str] = Field(default=None, max_length=36)
 
 
 class MeetingUpdate(BaseModel):
@@ -71,6 +73,7 @@ class MeetingResponse(BaseModel):
     # "CODE: тайлбар" хэлбэртэй (NO_AUDIO, NO_SPEECH, ASR_FAILED, SUMMARY_FAILED, INTERRUPTED, INTERNAL_ERROR)
     processing_error: Optional[str] = None
     participants: List[str] = Field(default_factory=list)
+    template_id: Optional[str] = None
 
 
 class MeetingListResponse(BaseModel):

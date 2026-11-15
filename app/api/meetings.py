@@ -18,7 +18,7 @@ from app.models.schemas import (
     TranscriptReplace,
     UserResponse,
 )
-from app.services import live_transcriber, meeting_store, processing, vocabulary
+from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services.auth import current_user
 
@@ -54,6 +54,10 @@ def _owned(meeting_id: str, user: UserResponse) -> MeetingResponse:
 
 @router.post("", response_model=MeetingResponse, status_code=201)
 def create_meeting(body: MeetingCreate, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    if body.template_id:
+        tmpl = templates.get_template(body.template_id)
+        if not tmpl or not (tmpl["is_default"] or tmpl["owner_id"] == user.id):
+            raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND: Загвар олдсонгүй")
     return meeting_store.create_meeting(user.id, body)
 
 
@@ -197,7 +201,10 @@ async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(curre
     
     try:
         # Шинэ summary үүсгэх
-        minutes = await llm_mod.llm_provider.generate_minutes(transcript, participants)
+        ctx = meeting_store.get_meeting_context(meeting_id)
+        minutes = await llm_mod.llm_provider.generate_minutes(
+            transcript, participants, template=ctx["template"], language=ctx["language"]
+        )
         
         # Одоогийн minutes-аас summary-г шинэчлэх
         current_minutes = meeting_store.get_meeting_minutes(meeting_id)

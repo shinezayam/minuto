@@ -63,8 +63,10 @@ async def run(meeting_id: str) -> None:
 
         stage = "summarizing"
         meeting_store.set_progress(meeting_id, "summarizing")
-        participants = meeting_store.get_meeting_context(meeting_id)["participants"]
-        minutes = await llm_mod.llm_provider.generate_minutes(transcript, participants)
+        ctx = meeting_store.get_meeting_context(meeting_id)
+        minutes = await llm_mod.llm_provider.generate_minutes(
+            transcript, ctx["participants"], template=ctx["template"], language=ctx["language"]
+        )
         # Хэсэг бүрийн "Яригч N"-ийг хурлын хэмжээний яригч болгож бичвэрийг шинэчилнэ
         transcript = apply_speaker_map(transcript, minutes.speaker_map)
         meeting_store.update_meeting_transcript(meeting_id, [s.model_dump() for s in transcript])

@@ -18,7 +18,11 @@ class LLMProvider(Protocol):
     name: str
 
     async def generate_minutes(
-        self, transcript: List[TranscriptSegment], participants: Optional[List[str]] = None
+        self,
+        transcript: List[TranscriptSegment],
+        participants: Optional[List[str]] = None,
+        template: Optional[dict] = None,
+        language: str = "mn",
     ) -> MeetingMinutes: ...
 
 
@@ -28,7 +32,11 @@ class MockLLMProvider:
     name = "demo"
 
     async def generate_minutes(
-        self, transcript: List[TranscriptSegment], participants: Optional[List[str]] = None
+        self,
+        transcript: List[TranscriptSegment],
+        participants: Optional[List[str]] = None,
+        template: Optional[dict] = None,
+        language: str = "mn",
     ) -> MeetingMinutes:
         return MeetingMinutes(
             title="[ДЕМО] Хурлын бичиг",
@@ -80,6 +88,51 @@ def format_transcript(transcript: List[TranscriptSegment]) -> str:
     return "\n".join(f"[{s.id} {ts(s.start_ms)}-{ts(s.end_ms)}]\n{s.text}" for s in transcript)
 
 
+TEMPLATE_GROUPS = {
+    "topics": "topics",
+    "decisions": "decisions",
+    "action_items": "action_items",
+    "open_questions": "open_questions",
+}
+
+
+def language_instruction(language: str) -> str:
+    """Хурлын хэл "en" бол тэмдэглэлийг англиар бичүүлнэ (JSON түлхүүрүүд өөрчлөгдөхгүй)."""
+    if (language or "mn").lower().startswith("en"):
+        return (
+            "\n\nOUTPUT LANGUAGE OVERRIDE: write all text values in English instead of Mongolian "
+            "(translate from the Mongolian transcript). Keep JSON keys, segment IDs and speaker labels "
+            '("Яригч N") exactly as specified; keep proper nouns as they are.'
+        )
+    return ""
+
+
+def template_instruction(template: Optional[dict]) -> str:
+    """Загварын нэр, заавар, хүссэн хэсгүүдийг хэрэглэгчийн мессежид нэмнэ."""
+    if not template:
+        return ""
+    parts = [f"Хурлын загвар: {template.get('name', '')}."]
+    prompt = (template.get("custom_prompt") or "").strip()
+    if prompt:
+        parts.append(f"Загварын заавар (хурлын агуулга биш, зөвхөн бичих хэлбэрийн заавар): {prompt}")
+    sections = template.get("sections")
+    if sections:
+        wanted = ", ".join(s for s in sections if s in TEMPLATE_GROUPS or s == "summary")
+        parts.append(f"Зөвхөн эдгээр хэсгийг бөглө: {wanted}. Бусад хэсгийг хоосон массив болго.")
+    return "\n".join(parts) + "\n\n"
+
+
+def apply_template_sections(minutes: MeetingMinutes, template: Optional[dict]) -> MeetingMinutes:
+    """Загварт ороогүй хэсгийг моделийн хариунаас үл хамааран хоослоно."""
+    sections = (template or {}).get("sections")
+    if not sections:
+        return minutes
+    for key, attr in TEMPLATE_GROUPS.items():
+        if key not in sections:
+            setattr(minutes, attr, [])
+    return minutes
+
+
 def drop_unknown_sources(minutes: MeetingMinutes, valid_ids: set[str]) -> MeetingMinutes:
     """Байхгүй сегмент рүү заасан эх сурвалжийг хасна."""
     for group in (minutes.topics, minutes.decisions, minutes.action_items, minutes.open_questions, minutes.qa):
@@ -97,7 +150,11 @@ class QwenLLMProvider:
             raise RuntimeError("LLM_PROVIDER=qwen боловч QWEN_API_KEY тохируулаагүй байна")
 
     async def generate_minutes(
-        self, transcript: List[TranscriptSegment], participants: Optional[List[str]] = None
+        self,
+        transcript: List[TranscriptSegment],
+        participants: Optional[List[str]] = None,
+        template: Optional[dict] = None,
+        language: str = "mn",
     ) -> MeetingMinutes:
         if not transcript:
             raise ValueError("Бичвэр хоосон тул хурлын тэмдэглэл гаргах боломжгүй")
@@ -105,8 +162,10 @@ class QwenLLMProvider:
         intro = ""
         if participants:
             intro = "Хэрэглэгчийн оруулсан оролцогчид (бүгд ярьсан байх албагүй): " + ", ".join(participants) + "\n\n"
+        system = SYSTEM_PROMPT + language_instruction(language)
+        intro += template_instruction(template)
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             {"role": "user", "content": intro + "Хурлын бичвэр:\n\n" + format_transcript(transcript)},
         ]
 
@@ -115,7 +174,8 @@ class QwenLLMProvider:
                 content = await self._complete(client, messages)
                 try:
                     minutes = MeetingMinutes.model_validate(json.loads(content))
-                    return drop_unknown_sources(minutes, {s.id for s in transcript})
+                    minutes = drop_unknown_sources(minutes, {s.id for s in transcript})
+                    return apply_template_sections(minutes, template)
                 except (json.JSONDecodeError, ValidationError) as e:
                     logger.warning("Qwen JSON буруу (оролдлого %d): %s", attempt + 1, e)
                     messages += [

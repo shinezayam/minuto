@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from app.db import MeetingTemplate, session_scope
+from app.db import Meeting, MeetingTemplate, session_scope
 
 logger = logging.getLogger(__name__)
 
@@ -58,24 +59,41 @@ DEFAULT_TEMPLATES = [
 ]
 
 
+# list_templates синхрон endpoint тул нэг дор хоёр хүсэлт зэрэг орвол хоёулаа "байхгүй" гэж үзээд давхар үүсгэдэг байсан
+_seed_lock = threading.Lock()
+
+
 def ensure_default_templates() -> None:
-    """Default template-ууд байхгүй бол үүсгэнэ."""
-    with session_scope() as s:
-        existing = s.scalars(select(MeetingTemplate).where(MeetingTemplate.is_default == 1)).all()
-        existing_names = {t.name for t in existing}
+    """Default template-ууд байхгүй бол үүсгэж, давхардсаныг цэвэрлэнэ."""
+    with _seed_lock, session_scope() as s:
+        rows = s.scalars(
+            select(MeetingTemplate)
+            .where(MeetingTemplate.is_default == 1)
+            .order_by(MeetingTemplate.created_at, MeetingTemplate.id)
+        ).all()
+
+        kept: dict[str, MeetingTemplate] = {}
+        for t in rows:
+            first = kept.setdefault(t.name, t)
+            if first is not t:
+                # Давхардсан загвар: хурлуудыг эхнийх рүү шилжүүлээд устгана
+                s.execute(update(Meeting).where(Meeting.template_id == t.id).values(template_id=first.id))
+                s.delete(t)
+                logger.info("Removed duplicate default template: %s", t.name)
 
         for tmpl in DEFAULT_TEMPLATES:
-            if tmpl["name"] not in existing_names:
-                new_tmpl = MeetingTemplate(
-                    name=tmpl["name"],
-                    description=tmpl["description"],
-                    icon=tmpl["icon"],
-                    sections=tmpl["sections"],
-                    custom_prompt=tmpl["custom_prompt"],
-                    is_default=1,
-                    owner_id=None,
+            if tmpl["name"] not in kept:
+                s.add(
+                    MeetingTemplate(
+                        name=tmpl["name"],
+                        description=tmpl["description"],
+                        icon=tmpl["icon"],
+                        sections=tmpl["sections"],
+                        custom_prompt=tmpl["custom_prompt"],
+                        is_default=1,
+                        owner_id=None,
+                    )
                 )
-                s.add(new_tmpl)
                 logger.info("Created default template: %s", tmpl["name"])
 
 

@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from sqlalchemy import select, update
 
-from app.db import Contact, Meeting, User, session_scope
+from app.db import Contact, Meeting, MeetingTemplate, User, session_scope
 from app.models.schemas import ContactResponse, MeetingCreate, MeetingResponse, MeetingStatus, MeetingUpdate
 
 
@@ -35,6 +35,7 @@ def _to_response(m: Meeting) -> MeetingResponse:
         processing_total=m.processing_total or 0,
         processing_error=m.processing_error,
         participants=list(m.participants or []),
+        template_id=m.template_id,
     )
 
 
@@ -81,6 +82,7 @@ def create_meeting(owner_id: str, data: MeetingCreate) -> MeetingResponse:
             owner_id=owner_id,
             title=data.title,
             language=data.language,
+            template_id=data.template_id,
             status=MeetingStatus.DRAFT.value,
             participants=participants,
         )
@@ -405,9 +407,19 @@ def get_meeting_context(meeting_id: str) -> dict:
     with session_scope() as s:
         m = s.get(Meeting, meeting_id)
         if not m:
-            return {"participants": [], "owner_name": None}
+            return {"participants": [], "owner_name": None, "template": None, "language": "mn"}
         owner = s.get(User, m.owner_id)
-        return {"participants": list(m.participants or []), "owner_name": owner_display_name(owner)}
+        tmpl = s.get(MeetingTemplate, m.template_id) if m.template_id else None
+        return {
+            "participants": list(m.participants or []),
+            "owner_name": owner_display_name(owner),
+            "language": m.language or "mn",
+            "template": (
+                {"name": tmpl.name, "sections": list(tmpl.sections or []), "custom_prompt": tmpl.custom_prompt}
+                if tmpl
+                else None
+            ),
+        }
 
 
 def owner_display_name(user: Optional[User]) -> Optional[str]:
