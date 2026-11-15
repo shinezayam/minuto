@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect, text
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -37,6 +37,8 @@ class User(Base):
     # Хурлын тэмдэглэлд "Хөтөлсөн: Minuto / <нэр>" гэж гарна
     name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Нэмэгдүүлснээр хуучин токенууд хүчингүй болно (revision 0002)
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class Meeting(Base):
@@ -194,30 +196,12 @@ def configure(url: Optional[str] = None) -> Engine:
         _engine.dispose()
     _engine = create_engine(url, **kwargs)
     _SessionLocal = sessionmaker(_engine, expire_on_commit=False)
-    Base.metadata.create_all(_engine)
-    _add_missing_columns(_engine)
+    # Схемийг зөвхөн Alembic удирдана (app/migrations). Шинэ DB-д baseline үүсгэнэ, байгаа DB-д юу ч эвдэхгүй.
+    from app.migrate import upgrade_to_head
+
+    upgrade_to_head(_engine)
     logger.info("Database ready: %s", _engine.url.render_as_string(hide_password=True))
     return _engine
-
-
-# create_all() байгаа хүснэгтэд шинэ багана нэмдэггүй тул энд жагсааж нэмнэ (Postgres, SQLite хоёуланд)
-_ADDED_COLUMNS = [
-    ("users", "name", "VARCHAR(100)"),
-    ("meetings", "participants", "JSON"),
-    ("meetings", "archived", "INTEGER DEFAULT 0"),
-    ("meetings", "template_id", "VARCHAR(36)"),
-    ("meetings", "workspace_id", "VARCHAR(36)"),
-    ("meetings", "project_id", "VARCHAR(36)"),
-]
-
-
-def _add_missing_columns(engine: Engine) -> None:
-    insp = inspect(engine)
-    for table, column, ddl in _ADDED_COLUMNS:
-        if column not in {c["name"] for c in insp.get_columns(table)}:
-            with engine.begin() as conn:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
-            logger.info("Added column %s.%s", table, column)
 
 
 @contextmanager
