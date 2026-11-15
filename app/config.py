@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     allow_registration: bool = True
 
     cors_origins: str = "http://localhost:3000"
+    # "production" үед /api/docs унтарч, нууц (JWT_SECRET) шаардлагатай. Render дээр RENDER env автоматаар production гэж тооцогдоно.
+    environment: str = "development"
+    # Урд талд найдвартай proxy (Render, Vercel) байвал X-Forwarded-For-ийн сүүлийн хаягийг клиентийн IP гэж үзнэ.
+    trust_proxy: bool = False
+    # Зөвшөөрөгдөх Host header-ууд (таслалаар). "*" = хязгааргүй.
+    allowed_hosts: str = "*"
+    # WebSocket-ийн Origin allow-list. Хоосон бол CORS_ORIGINS-ийг ашиглана.
+    ws_allowed_origins: str = ""
+    # Rate limit (минутад): ерөнхий / нэвтрэх, бүртгүүлэх / хүнд (AI, боловсруулалт) endpoint
+    rate_limit_per_min: int = 120
+    rate_limit_auth_per_min: int = 10
+    rate_limit_expensive_per_min: int = 20
     max_audio_chunk_bytes: int = 5_000_000
     audio_storage_path: str = "./audio_storage"
 
@@ -65,6 +77,20 @@ class Settings(BaseSettings):
         if not self.omni_model:
             self.omni_model = "qwen3-omni-flash"
         return self
+
+    @property
+    def is_production(self) -> bool:
+        import os
+
+        return self.environment.strip().lower() == "production" or bool(os.environ.get("RENDER"))
+
+    @property
+    def proxy_trusted(self) -> bool:
+        return self.trust_proxy or self.is_production
+
+    def ws_origins(self) -> list[str]:
+        raw = self.ws_allowed_origins or self.cors_origins
+        return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
 
 
 settings = Settings()

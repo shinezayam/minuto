@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import io
 import mimetypes
 import shutil
@@ -22,6 +23,7 @@ from app.services import live_transcriber, meeting_store, processing, templates,
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services.auth import current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
 _UPLOAD_EXT = {
@@ -213,8 +215,9 @@ async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(curre
             meeting_store.update_meeting_minutes(meeting_id, current_minutes)
         
         return {"meeting_id": meeting_id, "summary": minutes.summary}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SUMMARY_FAILED: {e}")
+    except Exception:  # noqa: BLE001 — дэлгэрэнгүйг зөвхөн лог руу бичнэ
+        logger.exception("Meeting %s summary regeneration failed", meeting_id)
+        raise HTTPException(status_code=500, detail="SUMMARY_FAILED: Хураангуйг дахин үүсгэж чадсангүй")
 
 
 @router.put("/{meeting_id}/action-items")

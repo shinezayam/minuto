@@ -8,6 +8,7 @@ from typing import Dict, Optional, Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import settings
+from app.security import ws_origin_allowed
 from app.models.schemas import WSAck, WSError, WSRecordingReady
 from app.services.audio_ingest import audio_ingest
 from app.services import live_transcriber, meeting_store, processing
@@ -32,6 +33,12 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
     дараа нь шууд binary аудио. Хадгалсны дараа {"type": "audio.ack", "sequence": N} буцаана.
     Ижил sequence дахин ирвэл (дахин холбогдсоны дараа) дарж бичээд дахин ack өгнө.
     """
+    # Өөр сайтаас (CSWSH) ирсэн холболтыг accept хийхээс өмнө татгалзана
+    if not ws_origin_allowed(websocket.headers.get("origin")):
+        logger.warning("WS rejected: origin %s", websocket.headers.get("origin"))
+        await websocket.close(code=4403)
+        return
+
     await websocket.accept()
 
     # Хөтчийн WebSocket header явуулж чаддаггүй тул токенийг ?token=... хэлбэрээр авна

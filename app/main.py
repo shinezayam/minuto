@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from urllib.parse import urlparse
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import db
 from app.config import settings
 from app.models.schemas import HealthResponse
+from app.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.api.ask import router as ask_router
 from app.api.auth import router as auth_router
 from app.api.contacts import router as contacts_router
@@ -26,49 +26,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# Security headers middleware
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        return response
-
-
-# Rate limiting middleware (simple in-memory)
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_requests: int = 100, window_seconds: int = 60):
-        super().__init__(app)
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self.requests = {}
-
-    async def dispatch(self, request: Request, call_next):
-        client_ip = request.client.host if request.client else "unknown"
-        now = __import__("time").time()
-
-        # Clean old requests
-        if client_ip not in self.requests:
-            self.requests[client_ip] = []
-        self.requests[client_ip] = [t for t in self.requests[client_ip] if now - t < self.window_seconds]
-
-        # Check rate limit
-        if len(self.requests[client_ip]) >= self.max_requests:
-            return Response(
-                content="Too many requests. Please try again later.",
-                status_code=429,
-                headers={"Retry-After": str(self.window_seconds)},
-            )
-
-        self.requests[client_ip].append(now)
-        return await call_next(request)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.is_production and not settings.jwt_secret:
+        # Нууцгүй бол сервер дахин эхлэх бүрт бүх хэрэглэгч гарч, олон instance-д токен таарахгүй
+        raise RuntimeError("JWT_SECRET заавал тохируулна (production)")
     db.configure()
     interrupted = meeting_store.fail_interrupted_processing()
     if interrupted:
@@ -82,14 +44,16 @@ app = FastAPI(
     description="Backend for Mongolian meeting transcription and AI minutes",
     version="0.2.0",
     lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url=None if settings.is_production else "/api/docs",
+    redoc_url=None if settings.is_production else "/api/redoc",
+    openapi_url=None if settings.is_production else "/api/openapi.json",
 )
 
 # Security middleware
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
+app.add_middleware(RateLimitMiddleware)
+_hosts = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()] or ["*"]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
 
 # CORS
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
@@ -114,13 +78,17 @@ app.include_router(workspaces_router)
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
+    """Нийтэд нээлттэй, хамгийн бага мэдээлэлтэй. Provider, түлхүүр, хостын мэдээлэл гаргахгүй."""
     return HealthResponse(
         status="ok",
         version="0.2.0",
-        asr_provider=settings.asr_provider,
-        llm_provider=settings.llm_provider,
         database=db.dialect(),
         live_transcription=live_transcriber.enabled(),
-        qwen_host=urlparse(settings.qwen_base_url).hostname or "",
-        qwen_key_hint=("…" + settings.qwen_api_key[-4:]) if len(settings.qwen_api_key) > 8 else ("set" if settings.qwen_api_key else ""),
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    # Дэлгэрэнгүйг зөвхөн сервер дээр бүртгэнэ; клиентэд код л очно
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "INTERNAL_ERROR: Серверт алдаа гарлаа"}, status_code=500)

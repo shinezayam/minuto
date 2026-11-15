@@ -8,7 +8,8 @@ from httpx import ASGITransport, AsyncClient
 
 from app import db
 from app.config import settings
-from app.main import RateLimitMiddleware, app
+from app.main import app
+from app.security import RateLimitMiddleware
 from app.services import processing
 from app.services.audio_ingest import audio_ingest
 

@@ -175,15 +175,10 @@ class WSProcessingStatus(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
-    asr_provider: str
-    llm_provider: str = "demo"
     # "postgresql" | "sqlite" — өгөгдөл сервер дахин эхлэхэд хадгалагдах эсэхийг шалгахад
     database: str = ""
     # Хурлын үеэр бичвэрийг шууд харуулах боломжтой эсэх
     live_transcription: bool = False
-    # Тохиргоог шалгахад: Qwen gateway-ийн хост, түлхүүрийн сүүлийн 4 тэмдэгт (түлхүүрийг бүтнээр нь хэзээ ч гаргахгүй)
-    qwen_host: str = ""
-    qwen_key_hint: str = ""
 
 
 # ---------- Ask Minuto ----------

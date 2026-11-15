@@ -8,6 +8,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.12
+      - key: ENVIRONMENT
+        value: production
       - key: CORS_ORIGINS
         value: https://minuto-frontend.vercel.app,https://mongolian-ai-minutes.vercel.app,http://localhost:3000
       # omni = Qwen-Omni API (free plan-ий 512MB RAM-д багтана). whisper medium-д 2GB+ RAM хэрэгтэй.
