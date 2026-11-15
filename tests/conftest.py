@@ -8,9 +8,31 @@ from httpx import ASGITransport, AsyncClient
 
 from app import db
 from app.config import settings
-from app.main import app
+from app.main import RateLimitMiddleware, app
 from app.services import processing
 from app.services.audio_ingest import audio_ingest
+
+
+def _reset_rate_limiter() -> None:
+    """Глобал in-memory rate limiter-ийн төлөвийг цэвэрлэнэ (тест хооронд 429 алдагдахаас сэргийлнэ)."""
+    if app.middleware_stack is None:
+        app.middleware_stack = app.build_middleware_stack()
+    layer = app.middleware_stack
+    while layer is not None:
+        if isinstance(layer, RateLimitMiddleware):
+            layer.requests.clear()
+            return
+        layer = getattr(layer, "app", None)
+
+
+@pytest.fixture(autouse=True)
+def offline_providers(monkeypatch):
+    """Тест хэзээ ч төлбөртэй/сүлжээний дуудлага хийхгүй: demo provider, хоосон API түлхүүр."""
+    for name in ("ASR_PROVIDER", "LLM_PROVIDER", "QWEN_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(settings, "asr_provider", "demo")
+    monkeypatch.setattr(settings, "llm_provider", "demo")
+    monkeypatch.setattr(settings, "qwen_api_key", "")
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +46,7 @@ def isolated_env(tmp_path, monkeypatch):
     db_url = f"sqlite:///{tmp_path / 'test.db'}"
     monkeypatch.setattr(settings, "database_url", db_url)  # TestClient-ийн lifespan ч мөн үүнийг ашиглана
     db.configure(db_url)
+    _reset_rate_limiter()
     yield storage
 
 
