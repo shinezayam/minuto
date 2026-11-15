@@ -92,7 +92,7 @@ def invite_member(workspace_id: str, body: InviteRequest, user: UserResponse = D
     return result
 
 
-@router.delete("/{workspace_id}/members/{user_id}", status_code=204)
+@router.delete("/{workspace_id}/members/{user_id}", status_code=204, response_model=None)
 def remove_member(workspace_id: str, user_id: str, user: UserResponse = Depends(current_user)) -> None:
     """Гишүүн хасах."""
     if not workspaces.remove_member(workspace_id, user.id, user_id):
@@ -120,7 +120,7 @@ def create_project(workspace_id: str, body: ProjectCreate, user: UserResponse = 
     return result
 
 
-@router.delete("/{workspace_id}/projects/{project_id}", status_code=204)
+@router.delete("/{workspace_id}/projects/{project_id}", status_code=204, response_model=None)
 def delete_project(workspace_id: str, project_id: str, user: UserResponse = Depends(current_user)) -> None:
     """Project устгах."""
     if not workspaces.delete_project(project_id, user.id):

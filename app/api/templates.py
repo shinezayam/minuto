@@ -62,7 +62,7 @@ def get_template(template_id: str, user: UserResponse = Depends(current_user)) -
     return tmpl
 
 
-@router.delete("/{template_id}", status_code=204)
+@router.delete("/{template_id}", status_code=204, response_model=None)
 def delete_template(template_id: str, user: UserResponse = Depends(current_user)) -> None:
     """Template устгах (зөвхөн өөрийнх)."""
     if not templates.delete_template(template_id, user.id):
