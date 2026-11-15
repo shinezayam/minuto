@@ -98,6 +98,12 @@ def get_meeting(meeting_id: str, owner_id: Optional[str] = None) -> Optional[Mee
         return _to_response(m) if m else None
 
 
+def meeting_ids(owner_id: str) -> list[str]:
+    """Хэрэглэгчийн бүх (архивласан ч) хурлын id — квот тооцоход."""
+    with session_scope() as s:
+        return list(s.scalars(select(Meeting.id).where(Meeting.owner_id == owner_id)))
+
+
 def list_meetings(owner_id: str, include_archived: bool = False) -> list[MeetingResponse]:
     with session_scope() as s:
         query = select(Meeting).where(Meeting.owner_id == owner_id)

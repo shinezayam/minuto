@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     rate_limit_auth_per_min: int = 10
     rate_limit_expensive_per_min: int = 20
     max_audio_chunk_bytes: int = 5_000_000
+    # Аудио хамгаалалт (env-ээр өөрчилнө). 0 = хязгааргүй (зөвхөн тест/дотоод хэрэглээнд)
+    max_upload_bytes: int = 300_000_000  # нэг файл upload
+    max_recording_sec: int = 4 * 3600  # нэг бичлэгийн урт (upload болон шууд бичлэг)
+    max_ws_total_bytes: int = 400_000_000  # нэг хурлын шууд бичлэгийн нийт хэмжээ
+    user_daily_upload_bytes: int = 2_000_000_000  # нэг хэрэглэгч өдөрт
+    user_total_storage_bytes: int = 10_000_000_000  # нэг хэрэглэгчийн нийт аудио
+    min_free_disk_bytes: int = 500_000_000  # диск энэнээс бага чөлөөтэй бол шинэ аудио авахгүй
     audio_storage_path: str = "./audio_storage"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}

@@ -6,7 +6,7 @@ import io
 import mimetypes
 import shutil
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.models.minutes import MeetingMinutes
@@ -19,7 +19,9 @@ from app.models.schemas import (
     TranscriptReplace,
     UserResponse,
 )
+from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
+from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services.auth import current_user
 
@@ -145,39 +147,80 @@ def unarchive_meeting(meeting_id: str, user: UserResponse = Depends(current_user
 @router.post("/{meeting_id}/upload", status_code=200)
 async def upload_audio(
     meeting_id: str,
+    request: Request,
     file: UploadFile = File(...),
     user: UserResponse = Depends(current_user),
 ) -> dict:
     _owned(meeting_id, user)
 
-    content_type = (file.content_type or "").split(";")[0].strip().lower()
-    if not content_type.startswith("audio/") and not content_type.startswith("video/"):
-        raise HTTPException(status_code=400, detail="File must be an audio file")
+    try:
+        guard.check_declared_size(request.headers.get("content-length"))
+        if not guard.declared_type_ok(file.content_type or ""):
+            raise HTTPException(status_code=415, detail="UNSUPPORTED_AUDIO: Зөвхөн аудио файл оруулна уу")
+        guard.free_disk_ok()
+        guard.check_quota(meeting_store.meeting_ids(user.id), incoming=0)
+    except guard.GuardError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
 
     meeting_dir = processing.meeting_dir(meeting_id)
     meeting_dir.mkdir(parents=True, exist_ok=True)
-    for old in meeting_dir.glob("uploaded*"):
-        old.unlink()
-    filepath = meeting_dir / f"uploaded{_UPLOAD_EXT.get(content_type, '.bin')}"
+    part = meeting_dir / "uploaded.part"
 
-    def _save() -> None:
-        with open(filepath, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+    def _save() -> str:
+        """Урсгалаар бичиж, байтыг тоолно: хязгаар хэтэрвэл тэр даруй зогсоож хагас файлыг устгана."""
+        written = 0
+        head = b""
+        try:
+            with open(part, "wb") as f:
+                while True:
+                    chunk = file.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not head:
+                        head = chunk[:16]
+                    written += len(chunk)
+                    if settings.max_upload_bytes and written > settings.max_upload_bytes:
+                        raise guard.too_large()
+                    f.write(chunk)
+            if not written:
+                raise guard.GuardError("EMPTY_FILE", 400, "Файл хоосон байна")
+            ext = guard.sniff_audio_ext(head)
+            if ext is None:
+                raise guard.GuardError("UNSUPPORTED_AUDIO", 415, "Энэ файл аудио форматтай биш байна (mp3, wav, m4a, ogg, webm, flac дэмжинэ)")
+            guard.check_quota(meeting_store.meeting_ids(user.id), incoming=written)
+            return ext
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
 
-    await asyncio.to_thread(_save)
+    try:
+        ext = await asyncio.to_thread(_save)
+    except guard.GuardError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
+
+    for old in meeting_dir.glob("uploaded.*"):
+        if old != part:
+            old.unlink()
+    filepath = meeting_dir / f"uploaded{ext}"
+    part.replace(filepath)
 
     # Гэмтсэн/дутуу файлыг Process хүртэл хүлээлгүй, upload дээр нь шууд буцаана
     probe_error = await asyncio.to_thread(probe_audio_error, filepath)
     if probe_error:
+        logger.warning("Meeting %s: invalid audio upload: %s", meeting_id, probe_error)
         filepath.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,
             detail=(
                 "INVALID_AUDIO: Аудио файл гэмтсэн эсвэл дутуу байна (бичлэг бүрэн хадгалагдаагүй, "
-                "эсвэл дутуу татагдсан байж болно). Файлаа тоглуулж шалгаад дахин upload хийнэ үү. "
-                f"[{probe_error}]"
+                "эсвэл дутуу татагдсан байж болно). Файлаа тоглуулж шалгаад дахин upload хийнэ үү."
             ),
         )
+    try:
+        guard.check_duration(await asyncio.to_thread(guard.probe_duration_sec, filepath))
+    except guard.GuardError as e:
+        filepath.unlink(missing_ok=True)
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
 
     return {
         "meeting_id": meeting_id,

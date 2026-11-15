@@ -12,6 +12,7 @@ from app.security import ws_origin_allowed
 from app.models.schemas import WSAck, WSError, WSRecordingReady
 from app.services.audio_ingest import audio_ingest
 from app.services import live_transcriber, meeting_store, processing
+from app.services import upload_guard as guard
 from app.services.auth import user_from_token
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,10 @@ router = APIRouter()
 
 # Track active WebSocket connections per meeting
 _active_connections: Dict[str, Set[WebSocket]] = {}
+
+# Нэг дор ирэх sequence-ийн дээд үсрэлт (дахин холболтын дараа resend хийхэд хангалттай)
+MAX_SEQUENCE_JUMP = 1000
+MAX_SEQUENCE = 200_000
 
 
 async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
@@ -54,8 +59,20 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
         await websocket.close(code=4404)
         return
 
+    # Диск дүүрсэн / квот хэтэрсэн бол шинэ бичлэгийг эхлүүлэхгүй
+    try:
+        guard.free_disk_ok()
+        guard.check_quota(meeting_store.meeting_ids(user.id))
+    except guard.GuardError as e:
+        await _send_error(websocket, e.code, e.message)
+        await websocket.close(code=4413)
+        return
+
     _active_connections.setdefault(meeting_id, set()).add(websocket)
     pending_meta: Optional[dict] = None
+    # Дахин холбогдсон бол өмнө хадгалагдсан хэмжээнээс үргэлжлүүлж тооцно
+    total_bytes = guard.dir_bytes(processing.meeting_dir(meeting_id))
+    next_expected_seq = 0
 
     # Шууд бичвэр ар талын task-аас ирэх тул бүх илгээлтийг нэг lock-оор дараалуулна
     send_lock = asyncio.Lock()
@@ -93,9 +110,29 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
 
                 if meta.get("type") != "audio.chunk":
                     continue  # одоогоор өөр төрлийн мессеж хүлээж авахгүй
-                if not isinstance(meta.get("sequence"), int) or meta["sequence"] < 0:
+                seq = meta.get("sequence")
+                if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
                     await send(WSError(code="BAD_MESSAGE", message="sequence must be a non-negative integer").model_dump())
                     continue
+                # Хэт том үсрэлт нь хэсэг бүрт тусдаа файл үүсгэх (диск/inode дүүргэх) хэрэглээ
+                if seq > next_expected_seq + MAX_SEQUENCE_JUMP or seq > MAX_SEQUENCE:
+                    await send(WSError(code="BAD_SEQUENCE", message="Chunk sequence is out of range").model_dump())
+                    continue
+                mime = str(meta.get("mime_type") or "audio/webm").split(";")[0].strip().lower()
+                if not mime.startswith("audio/"):
+                    await send(WSError(code="UNSUPPORTED_MIME", message="Only audio chunks are accepted").model_dump())
+                    continue
+                try:
+                    ts = int(meta.get("timestamp_ms") or 0)
+                except (TypeError, ValueError):
+                    ts = -1
+                if ts < 0:
+                    await send(WSError(code="BAD_MESSAGE", message="timestamp_ms must be a non-negative integer").model_dump())
+                    continue
+                if settings.max_recording_sec and ts > settings.max_recording_sec * 1000:
+                    await send(WSError(code="RECORDING_TOO_LONG", message=f"Бичлэг хэт урт байна (дээд хугацаа {settings.max_recording_sec // 3600} цаг)").model_dump())
+                    await websocket.close(code=4413)
+                    break
                 if pending_meta is not None:
                     # Өмнөх meta-гийн аудио ирээгүй — тэр хэсгийг алгасаж, клиент ack авахгүй тул дахин илгээнэ
                     logger.warning("meeting %s: chunk %s had no audio payload", meeting_id, pending_meta["sequence"])
@@ -111,6 +148,16 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
                 if len(data) > settings.max_audio_chunk_bytes:
                     await send(WSError(code="CHUNK_TOO_LARGE", message=f"Max size: {settings.max_audio_chunk_bytes} bytes").model_dump())
                     continue
+                if settings.max_ws_total_bytes and total_bytes + len(data) > settings.max_ws_total_bytes:
+                    await send(WSError(code="RECORDING_TOO_LARGE", message="Бичлэг хэт том болсон тул зогсоолоо. Одоо хүртэл бичигдсэн хэсэг хадгалагдсан.").model_dump())
+                    await websocket.close(code=4413)
+                    break
+                try:
+                    guard.free_disk_ok()
+                except guard.GuardError as e:
+                    await send(WSError(code=e.code, message=e.message).model_dump())
+                    await websocket.close(code=4413)
+                    break
                 try:
                     await audio_ingest.accept_chunk(
                         meeting_id=meeting_id,
@@ -123,6 +170,8 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
                     await send(WSError(code="CHUNK_REJECTED", message=str(e)).model_dump())
                     continue
 
+                total_bytes += len(data)
+                next_expected_seq = max(next_expected_seq, meta["sequence"] + 1)
                 await send(WSAck(sequence=meta["sequence"], meeting_id=meeting_id).model_dump())
                 if live is not None:
                     await live.notify_new_audio()
