@@ -70,6 +70,8 @@ class Meeting(Base):
     participants: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # Архивласан эсэх (soft delete)
     archived: Mapped[bool] = mapped_column(Integer, default=0)
+    # "Анхаарах" (яаралтай) гэж тэмдэглэсэн хугацаа; NULL = тэмдэглээгүй (revision 0006)
+    pinned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Ашигласан загвар
     template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # Workspace болон Project холбоос

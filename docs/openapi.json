@@ -956,6 +956,11 @@
       },
       "MeetingResponse": {
         "properties": {
+          "archived": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1008,6 +1013,23 @@
             },
             "title": "Participants",
             "type": "array"
+          },
+          "pinned": {
+            "default": false,
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned At"
           },
           "processing_done": {
             "default": 0,
@@ -3259,6 +3281,49 @@
         ]
       }
     },
+    "/api/meetings/{meeting_id}/pin": {
+      "post": {
+        "description": "\"Анхаарах\" гэж тэмдэглэнэ: жагсаалтын хамгийн дээр гарч, \"Яаралтай\" табад харагдана.",
+        "operationId": "pin_meeting_api_meetings__meeting_id__pin_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "title": "Meeting Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pin Meeting",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
     "/api/meetings/{meeting_id}/process": {
       "post": {
         "description": "Боловсруулалтыг ард нь эхлүүлээд шууд хариу өгнө.\nЯвцыг GET /api/meetings/{id} (processing_stage, processing_done/total, processing_error)-ээр харна.",
@@ -3777,6 +3842,48 @@
           }
         },
         "summary": "Unarchive Meeting",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/unpin": {
+      "post": {
+        "operationId": "unpin_meeting_api_meetings__meeting_id__unpin_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "title": "Meeting Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unpin Meeting",
         "tags": [
           "meetings"
         ]

@@ -41,6 +41,10 @@ def _to_response(m: Meeting, role: Optional[str] = None, user_id: Optional[str] 
         project_id=m.project_id,
         my_role=role,
         created_by_me=bool(user_id) and m.owner_id == user_id,
+        archived=bool(m.archived),
+        pinned=m.pinned_at is not None,
+        # SQLite timezone-гүй буцаадаг: үргэлж UTC болгож өгнө (frontend local цаг гэж уншихгүйн тулд)
+        pinned_at=(m.pinned_at if m.pinned_at is None or m.pinned_at.tzinfo else m.pinned_at.replace(tzinfo=timezone.utc)),
     )
 
 
@@ -157,7 +161,8 @@ def list_meetings(owner_id: str, include_archived: bool = False, workspace_id: O
             )
         if not include_archived:
             query = query.where(Meeting.archived == 0)
-        rows = s.scalars(query.order_by(Meeting.created_at.desc())).all()
+        # "Анхаарах" хурлууд эхэнд (сүүлд тэмдэглэсэн нь дээр), дараа нь шинээс хуучин руу
+        rows = s.scalars(query.order_by(Meeting.pinned_at.is_(None), Meeting.pinned_at.desc(), Meeting.created_at.desc())).all()
         roles = {ws: access.workspace_role(s, owner_id, ws) for ws in member_ws}
         return [_to_response(m, "owner" if m.workspace_id is None else roles.get(m.workspace_id), owner_id) for m in rows]
 
@@ -168,8 +173,26 @@ def archive_meeting(meeting_id: str, owner_id: str, archive: bool = True) -> Opt
         if not m:
             return None
         m.archived = 1 if archive else 0
+        if archive:
+            m.pinned_at = None  # архивласан хурал "анхаарах" жагсаалтад үлдэхгүй
         m.updated_at = _now()
         return _resp(s, m, owner_id)
+
+
+def pin_meeting(meeting_id: str, user_id: str, pinned: bool = True) -> Optional[MeetingResponse]:
+    """"Анхаарах" тэмдэг: workspace-ийн бүх гишүүнд харагдана, засах эрхтэй хүн (edit) тавьж/авна.
+    Архивласан хурлыг тэмдэглэхгүй (ValueError)."""
+    with session_scope() as s:
+        m = _get(s, meeting_id, user_id, "edit")
+        if not m:
+            return None
+        if pinned and m.archived:
+            raise ValueError("ARCHIVED")
+        if pinned:
+            m.pinned_at = m.pinned_at or _now()
+        else:
+            m.pinned_at = None
+        return _resp(s, m, user_id)
 
 
 def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optional[MeetingResponse]:

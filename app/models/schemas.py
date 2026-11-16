@@ -118,6 +118,10 @@ class MeetingResponse(BaseModel):
     my_role: Optional[str] = None
     # Энэ хурлыг хандаж буй хэрэглэгч өөрөө үүсгэсэн эсэх (editor зөвхөн өөрийнхийг устгана)
     created_by_me: bool = False
+    archived: bool = False
+    # "Анхаарах" гэж тэмдэглэсэн (жагсаалтын дээр гарна). pinned_at = тэмдэглэсэн цаг
+    pinned: bool = False
+    pinned_at: Optional[datetime] = None
 
 
 class MeetingListResponse(BaseModel):

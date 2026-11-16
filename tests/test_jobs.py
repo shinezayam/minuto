@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 import json
 from datetime import timedelta
 
@@ -142,7 +143,7 @@ def _make_meeting():
     from app.models.schemas import MeetingCreate
     from app.services.auth import register
 
-    user = register(f"u{id(object())}@test.mn", "password123")
+    user = register(f"u{uuid.uuid4().hex[:12]}@test.mn", "password123")  # id(object()) давтагдаж болно
     return meeting_store.create_meeting(user.id, MeetingCreate(title="J")).id
 
 

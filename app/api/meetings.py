@@ -174,6 +174,26 @@ def unarchive_meeting(meeting_id: str, user: UserResponse = Depends(current_user
     return meeting
 
 
+@router.post("/{meeting_id}/pin", response_model=MeetingResponse)
+def pin_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    """"Анхаарах" гэж тэмдэглэнэ: жагсаалтын хамгийн дээр гарч, "Яаралтай" табад харагдана."""
+    try:
+        meeting = meeting_store.pin_meeting(meeting_id, user.id, pinned=True)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="ARCHIVED: Архивласан хурлыг тэмдэглэх боломжгүй. Эхлээд архиваас гаргана уу.")
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return meeting
+
+
+@router.post("/{meeting_id}/unpin", response_model=MeetingResponse)
+def unpin_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.pin_meeting(meeting_id, user.id, pinned=False)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return meeting
+
+
 @router.post("/{meeting_id}/upload", status_code=200)
 async def upload_audio(
     meeting_id: str,
