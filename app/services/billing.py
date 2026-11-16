@@ -294,7 +294,13 @@ def _reserve(meeting_id: str, actor_user_id: Optional[str], shadow: bool) -> Opt
             UsageEvent.state.in_(("reserved", "debited")),
         ))
         if existing is not None:
-            return existing.id  # ижил аудио: дахин хасахгүй (давхар хүсэлт, дахин боловсруулалт)
+            if not (existing.duration_source == "unknown" and seconds is not None):
+                return existing.id  # ижил аудиог дахин хасахгүй (давхар хүсэлт, дахин боловсруулалт)
+            # Өмнө урт нь тодорхойгүй (0 минут) бүртгэгдсэн: тэрийг чөлөөлж, одоо хэмжсэн уртаар шинээр тооцно
+            existing.state = "released"
+            existing.settled_at = now
+            existing.reason = (existing.reason + "; " if existing.reason else "") + "re-measured"
+            s.flush()
         b = balance(s, scope_type, scope_id, now)
         remaining = b.remaining
         if seconds is None:

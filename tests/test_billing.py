@@ -517,3 +517,34 @@ def test_live_recording_without_duration_header_is_still_metered(monkeypatch):
     billing.reserve(mid, uid)
     [ev] = events(mid)
     assert (ev.source, ev.duration_source, ev.billable_minutes) == ("live", "probe", 2)
+
+
+def test_unknown_duration_event_is_remeasured_on_reprocess(monkeypatch, duration):
+    """0 минутаар (урт тодорхойгүй) бүртгэгдсэн хурлыг дахин боловсруулахад зөв уртаар тооцно; мэдэгдэж буй уртыг дахин хасахгүй."""
+    metering(monkeypatch, "shadow")
+    from app.db import User
+
+    with session_scope() as s:
+        u = User(email="re@t.mn", password_hash="x")
+        s.add(u)
+        s.flush()
+        m = Meeting(owner_id=u.id, title="Т", transcript=[])
+        s.add(m)
+        s.flush()
+        uid, mid = u.id, m.id
+    d = processing.meeting_dir(mid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "uploaded.wav").write_bytes(wav_bytes())
+
+    duration["sec"] = None
+    monkeypatch.setattr("app.services.audio_utils.decoded_duration_sec", lambda p: None)
+    billing.reserve(mid, uid)
+    assert [(e.duration_source, e.billable_minutes) for e in events(mid)] == [("unknown", 0)]
+
+    duration["sec"] = 125
+    billing.reserve(mid, uid)
+    rows = [(e.duration_source, e.billable_minutes, e.state) for e in events(mid)]
+    assert rows == [("unknown", 0, "released"), ("probe", 3, "reserved")]
+
+    billing.reserve(mid, uid)  # дахин: мэдэгдэж буй урттай тул нэмж хасахгүй
+    assert len(events(mid)) == 2
