@@ -315,3 +315,12 @@ async def test_deleting_project_keeps_meetings(world: World):
     assert (await world.c("owner").delete(f"/api/workspaces/{world.ws_id}/projects/{world.project_id}")).status_code == 204
     m = (await world.c("owner").get(f"/api/meetings/{mid}")).json()
     assert m["project_id"] is None and m["workspace_id"] == world.ws_id
+
+
+async def test_member_list_returns_every_member_with_role(world: World):
+    """Өмнө нь GET /members үргэлж 500 өгдөг байсан (scalars() + хоёр entity): гишүүн бүр, үүрэг, имэйлтэй буцна."""
+    for who in ROLES:
+        r = await world.c(who).get(f"/api/workspaces/{world.ws_id}/members")
+        assert r.status_code == 200, (who, r.text)
+        got = {m["email"]: m["role"] for m in r.json()}
+        assert got == {"owner@org.mn": "owner", "admin@org.mn": "admin", "editor@org.mn": "editor", "viewer@org.mn": "viewer"}

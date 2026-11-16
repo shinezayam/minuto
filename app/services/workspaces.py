@@ -206,7 +206,8 @@ def list_members(workspace_id: str, user_id: str) -> List[dict]:
         if not is_member:
             return []
         
-        rows = s.scalars(
+        # Хоёр entity (гишүүн + хэрэглэгч) сонгож байгаа тул scalars() биш execute(): өмнө нь "cannot unpack" гэж 500 өгдөг байсан
+        rows = s.execute(
             select(WorkspaceMember, User)
             .join(User, WorkspaceMember.user_id == User.id)
             .where(WorkspaceMember.workspace_id == workspace_id)
