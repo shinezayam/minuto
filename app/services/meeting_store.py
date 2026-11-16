@@ -20,7 +20,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _to_response(m: Meeting, role: Optional[str] = None) -> MeetingResponse:
+def _to_response(m: Meeting, role: Optional[str] = None, user_id: Optional[str] = None) -> MeetingResponse:
     return MeetingResponse(
         id=m.id,
         title=m.title,
@@ -40,7 +40,12 @@ def _to_response(m: Meeting, role: Optional[str] = None) -> MeetingResponse:
         workspace_id=m.workspace_id,
         project_id=m.project_id,
         my_role=role,
+        created_by_me=bool(user_id) and m.owner_id == user_id,
     )
+
+
+def _resp(session, m: Meeting, user_id: Optional[str]) -> MeetingResponse:
+    return _to_response(m, access.role_for(session, user_id, m) if user_id else None, user_id)
 
 
 def _get(session, meeting_id: str, user_id: Optional[str], action: str = "view") -> Optional[Meeting]:
@@ -121,14 +126,14 @@ def create_meeting(owner_id: str, data: MeetingCreate) -> MeetingResponse:
         s.add(m)
         _remember_contacts(s, owner_id, participants)
         s.flush()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 def get_meeting(meeting_id: str, owner_id: Optional[str] = None, action: str = "view") -> Optional[MeetingResponse]:
     """owner_id = хандаж буй хэрэглэгчийн id (workspace гишүүнийг ч агуулна). action: view | edit | delete."""
     with session_scope() as s:
         m = _get(s, meeting_id, owner_id, action)
-        return _to_response(m, access.role_for(s, owner_id, m) if m and owner_id else None) if m else None
+        return _to_response(m, access.role_for(s, owner_id, m) if m and owner_id else None, owner_id) if m else None
 
 
 def meeting_ids(owner_id: str) -> list[str]:
@@ -154,7 +159,7 @@ def list_meetings(owner_id: str, include_archived: bool = False, workspace_id: O
             query = query.where(Meeting.archived == 0)
         rows = s.scalars(query.order_by(Meeting.created_at.desc())).all()
         roles = {ws: access.workspace_role(s, owner_id, ws) for ws in member_ws}
-        return [_to_response(m, "owner" if m.workspace_id is None else roles.get(m.workspace_id)) for m in rows]
+        return [_to_response(m, "owner" if m.workspace_id is None else roles.get(m.workspace_id), owner_id) for m in rows]
 
 
 def archive_meeting(meeting_id: str, owner_id: str, archive: bool = True) -> Optional[MeetingResponse]:
@@ -164,7 +169,7 @@ def archive_meeting(meeting_id: str, owner_id: str, archive: bool = True) -> Opt
             return None
         m.archived = 1 if archive else 0
         m.updated_at = _now()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optional[MeetingResponse]:
@@ -178,7 +183,7 @@ def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optio
             m.participants = _dedupe(data.participants)
             _remember_contacts(s, owner_id, m.participants)
         m.updated_at = _now()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 def delete_meeting(meeting_id: str, owner_id: str) -> bool:
@@ -201,7 +206,7 @@ def start_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
         m.started_at = m.started_at or _now()
         m.last_resume_ms = _now_ms()
         m.updated_at = _now()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 def pause_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
@@ -215,7 +220,7 @@ def pause_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
         m.status = MeetingStatus.PAUSED.value
         m.duration_ms = m.pause_accumulated_ms
         m.updated_at = _now()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 def resume_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
@@ -226,7 +231,7 @@ def resume_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
         m.status = MeetingStatus.RECORDING.value
         m.last_resume_ms = _now_ms()
         m.updated_at = _now()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 def end_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
@@ -241,7 +246,7 @@ def end_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
         m.ended_at = _now()
         m.status = MeetingStatus.COMPLETED.value
         m.updated_at = _now()
-        return _to_response(m)
+        return _resp(s, m, owner_id)
 
 
 # ---------- Боловсруулалт ----------

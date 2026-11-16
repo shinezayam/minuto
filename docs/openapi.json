@@ -664,6 +664,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "created_by_me": {
+            "default": false,
+            "title": "Created By Me",
+            "type": "boolean"
+          },
           "duration_ms": {
             "default": 0,
             "title": "Duration Ms",

@@ -116,6 +116,8 @@ class MeetingResponse(BaseModel):
     project_id: Optional[str] = None
     # Хандаж буй хэрэглэгчийн энэ хурал дээрх үүрэг: owner | admin | editor | viewer (frontend товчлуур нуухад)
     my_role: Optional[str] = None
+    # Энэ хурлыг хандаж буй хэрэглэгч өөрөө үүсгэсэн эсэх (editor зөвхөн өөрийнхийг устгана)
+    created_by_me: bool = False
 
 
 class MeetingListResponse(BaseModel):
