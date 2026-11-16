@@ -249,6 +249,10 @@ def _audio_facts(meeting_id: str) -> Optional[dict]:
         return None
     source = "upload" if any(p.name.startswith("uploaded.") for p in d.iterdir()) else "live"
     seconds = upload_guard.probe_duration_sec(audio)
+    if seconds is None:  # шууд бичлэгийн webm-д урт бичигддэггүй: decode хийж хэмжинэ
+        from app.services.audio_utils import decoded_duration_sec
+
+        seconds = decoded_duration_sec(audio)
     return {"source": source, "seconds": seconds, "fingerprint": fingerprint(audio)}
 
 

@@ -149,6 +149,26 @@ async def extract_wav(src: Path, start_sec: float, dur_sec: float, dst: Path, sa
     return await asyncio.to_thread(_extract_wav_sync, src, start_sec, dur_sec, dst, sample_rate)
 
 
+_DECODED_TIME = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+def decoded_duration_sec(path: Path) -> Optional[float]:
+    """Файлыг бүтэн decode хийж бодит уртыг хэмжинэ. Хөтчийн MediaRecorder-ийн webm (шууд бичлэг) толгойдоо урт
+    бичдэггүй тул `Duration: N/A` гардаг — тэр үед ашиглана. Диск рүү юу ч бичихгүй (-f null)."""
+    try:
+        exe = ffmpeg_exe()
+    except RuntimeError:
+        return None
+    proc = subprocess.run([exe, "-hide_banner", "-nostdin", "-i", str(path), "-vn", "-f", "null", "-"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    matches = _DECODED_TIME.findall(proc.stderr)
+    if not matches:
+        return None
+    h, m, s = matches[-1]
+    seconds = int(h) * 3600 + int(m) * 60 + float(s)
+    return seconds if seconds > 0 else None
+
+
 def wav_bytes_duration_ms(data: bytes) -> int:
     with wave.open(io.BytesIO(data), "rb") as w:
         return int(w.getnframes() * 1000 / w.getframerate())

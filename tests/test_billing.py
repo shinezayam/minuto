@@ -477,3 +477,43 @@ async def test_contact_request_is_stored_and_validated(anon_client):
     assert ok.status_code == 201 and ok.json()["id"]
     bad = await anon_client.post("/api/contact-requests", json={"name": "Бат", "email": "not-an-email", "message": "x"})
     assert bad.status_code == 422
+
+
+# ---------------------------------------------------------------- шууд бичлэг: урт нь толгойд бичигдээгүй webm
+
+def _live_webm(path, seconds: int) -> bool:
+    import subprocess
+
+    from app.services.audio_utils import ffmpeg_exe
+
+    try:
+        exe = ffmpeg_exe()
+    except RuntimeError:
+        return False
+    with open(path, "wb") as f:  # pipe руу бичвэл MediaRecorder шиг Duration/Cues бичигдэхгүй
+        p = subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+                            "-c:a", "libvorbis", "-f", "webm", "pipe:1"], stdout=f, stderr=subprocess.PIPE)
+    return p.returncode == 0
+
+
+def test_live_recording_without_duration_header_is_still_metered(monkeypatch):
+    """Регресс: хөтчийн шууд бичлэг (Duration: N/A) 0 минутаар тооцогдож, минут огт хасагдахгүй байсан."""
+    metering(monkeypatch, "shadow")
+    from app.db import User
+
+    with session_scope() as s:
+        u = User(email="live@t.mn", password_hash="x")
+        s.add(u)
+        s.flush()
+        m = Meeting(owner_id=u.id, title="Шууд", transcript=[])
+        s.add(m)
+        s.flush()
+        uid, mid = u.id, m.id
+    d = processing.meeting_dir(mid)
+    d.mkdir(parents=True, exist_ok=True)
+    if not _live_webm(d / "000000.webm", 75):
+        pytest.skip("ffmpeg/libvorbis алга")
+    assert guard.probe_duration_sec(d / "000000.webm") is None  # толгойд урт байхгүйг баталгаажуулна
+    billing.reserve(mid, uid)
+    [ev] = events(mid)
+    assert (ev.source, ev.duration_source, ev.billable_minutes) == ("live", "probe", 2)
