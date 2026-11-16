@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import hashlib
+import json
 import logging
 import io
 import mimetypes
+import re
 import shutil
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.models.minutes import MeetingMinutes
 from app.models.schemas import (
+    ActionItemsUpdate,
     MeetingCreate,
     MeetingListResponse,
     MeetingResponse,
@@ -264,20 +271,53 @@ async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(curre
         raise HTTPException(status_code=500, detail="SUMMARY_FAILED: Хураангуйг дахин үүсгэж чадсангүй")
 
 
+def _action_items_etag(items) -> str:
+    return hashlib.sha1(json.dumps(items or [], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+def _is_iso_date(value: str) -> bool:
+    """YYYY-MM-DD (эсвэл түүнээс эхэлсэн ISO datetime) бодит огноо мөн эсэх."""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}(T.*)?$", value):
+        return False
+    try:
+        datetime.date.fromisoformat(value[:10])
+        return True
+    except ValueError:
+        return False
+
+
 @router.put("/{meeting_id}/action-items")
-def update_action_items(meeting_id: str, body: dict, user: UserResponse = Depends(current_user)) -> dict:
-    """Action items-г update хийх."""
+def update_action_items(
+    meeting_id: str,
+    body: ActionItemsUpdate,
+    user: UserResponse = Depends(current_user),
+    if_match: Optional[str] = Header(default=None),
+) -> dict:
+    """Даалгавруудыг шинэчилнэ. Бүтэц, статус, огноог шалгана; If-Match өгвөл зөрчилдөөнийг (412) илрүүлнэ."""
     _owned(meeting_id, user)
     current_minutes = meeting_store.get_meeting_minutes(meeting_id)
     if not current_minutes:
-        raise HTTPException(status_code=404, detail="Meeting minutes not found")
-    
-    # Action items-г шинэчлэх
-    if "action_items" in body:
-        current_minutes["action_items"] = body["action_items"]
-        meeting_store.update_meeting_minutes(meeting_id, current_minutes)
-    
-    return {"meeting_id": meeting_id, "action_items": current_minutes.get("action_items", [])}
+        raise HTTPException(status_code=404, detail="NO_MINUTES: Хурлын бичиг үүсээгүй байна")
+
+    current_items = current_minutes.get("action_items", [])
+    if if_match and if_match.strip('"') != _action_items_etag(current_items):
+        raise HTTPException(status_code=412, detail="CONFLICT: Даалгаврыг өөр газраас өөрчилсөн байна. Дахин ачаалж үзнэ үү.")
+
+    # Хуучин минутын чөлөөт текстэн due_date ("Баасан") өөрчлөгдөөгүй бол тэвчнэ; шинэ утга заавал ISO огноо
+    legacy_dates = {str(i.get("due_date")) for i in current_items if isinstance(i, dict) and i.get("due_date")}
+    valid_ids = {s.get("id") for s in (meeting_store.get_meeting_transcript(meeting_id) or [])}
+    cleaned = []
+    for item in body.action_items:
+        if item.due_date and not _is_iso_date(item.due_date) and item.due_date not in legacy_dates:
+            raise HTTPException(status_code=422, detail="INVALID_DUE_DATE: Хугацаа YYYY-MM-DD хэлбэртэй байх ёстой")
+        data = item.model_dump()
+        # Транскриптэд байхгүй сегментийн лавлагааг хасна
+        data["source_segment_ids"] = [i for i in data["source_segment_ids"] if i in valid_ids]
+        cleaned.append(data)
+
+    current_minutes["action_items"] = cleaned
+    meeting_store.update_meeting_minutes(meeting_id, current_minutes)
+    return {"meeting_id": meeting_id, "action_items": cleaned, "etag": _action_items_etag(cleaned)}
 
 
 @router.post("/{meeting_id}/topics")

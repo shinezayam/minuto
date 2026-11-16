@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 
 class MeetingStatus(str, Enum):
@@ -26,6 +26,34 @@ class MeetingCreate(BaseModel):
     participants: List[ParticipantName] = Field(default_factory=list, max_length=50)
     # Хурлын загвар (default эсвэл өөрийн) — тэмдэглэлийн хэсэг, зааварыг тодорхойлно
     template_id: Optional[str] = Field(default=None, max_length=36)
+
+
+ActionItemStatus = Literal["open", "in_progress", "done", "cancelled"]
+
+
+class ActionItemIn(BaseModel):
+    """Хэрэглэгчээс ирэх даалгавар. Үл мэдэгдэх талбарыг (extra) татгалзана."""
+
+    model_config = {"extra": "ignore"}
+
+    task: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    owner: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)]] = None
+    # ISO огноо (YYYY-MM-DD) эсвэл null. Хуучин (чөлөөт текст) утга хэвээр илгээгдвэл endpoint тэвчинэ.
+    due_date: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)]] = None
+    status: ActionItemStatus = "open"
+    source_segment_ids: List[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list, max_length=50)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _legacy_status(cls, v):
+        # Хуучин минутад LLM-ийн бичсэн утгуудыг тэвчиж, стандарт руу хөрвүүлнэ
+        if isinstance(v, str):
+            return {"pending": "open", "todo": "open", "": "open", "completed": "done", "complete": "done"}.get(v.strip().lower(), v)
+        return v
+
+
+class ActionItemsUpdate(BaseModel):
+    action_items: List[ActionItemIn] = Field(max_length=200)
 
 
 class MeetingUpdate(BaseModel):
