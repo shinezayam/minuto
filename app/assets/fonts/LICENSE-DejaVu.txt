@@ -1,0 +1,5 @@
+DejaVu Sans (v2.37) is distributed under the Bitstream Vera / DejaVu free font license
+(https://dejavu-fonts.github.io/License.html): free to use, copy, embed and redistribute,
+including in commercial software, provided the font is not sold by itself and the copyright
+notice stays with the files. Used here only to embed Cyrillic (Mongolian) glyphs in PDF exports.
+Copyright (c) 2003 Bitstream, Inc.; DejaVu changes are in the public domain.

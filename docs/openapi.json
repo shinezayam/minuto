@@ -3,6 +3,17 @@
     "schemas": {
       "ActionItem": {
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "due_date": {
             "anyOf": [
               {
@@ -14,6 +25,19 @@
             ],
             "title": "Due Date"
           },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "needs_review": {
+            "readOnly": true,
+            "title": "Needs Review",
+            "type": "boolean"
+          },
           "owner": {
             "anyOf": [
               {
@@ -24,6 +48,22 @@
               }
             ],
             "title": "Owner"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "edited",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review"
           },
           "source_segment_ids": {
             "default": [],
@@ -41,10 +81,21 @@
           "task": {
             "title": "Task",
             "type": "string"
+          },
+          "verification": {
+            "default": "no_evidence",
+            "enum": [
+              "quote_found",
+              "quote_not_found",
+              "no_evidence"
+            ],
+            "title": "Verification",
+            "type": "string"
           }
         },
         "required": [
-          "task"
+          "task",
+          "needs_review"
         ],
         "title": "ActionItem",
         "type": "object"
@@ -401,6 +452,31 @@
       },
       "Decision": {
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "needs_review": {
+            "description": "Хүний анхаарал шаардлагатай: ишлэл батлагдаагүй, эсвэл санал/эргэлзээтэй. Хүн хүлээн авсан бол шаардахгүй.",
+            "readOnly": true,
+            "title": "Needs Review",
+            "type": "boolean"
+          },
           "rationale": {
             "anyOf": [
               {
@@ -412,6 +488,22 @@
             ],
             "title": "Rationale"
           },
+          "review": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "edited",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review"
+          },
           "source_segment_ids": {
             "default": [],
             "items": {
@@ -420,15 +512,56 @@
             "title": "Source Segment Ids",
             "type": "array"
           },
+          "status": {
+            "default": "unclear",
+            "enum": [
+              "proposed",
+              "confirmed",
+              "rejected",
+              "unclear"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
           "text": {
             "title": "Text",
+            "type": "string"
+          },
+          "verification": {
+            "default": "no_evidence",
+            "enum": [
+              "quote_found",
+              "quote_not_found",
+              "no_evidence"
+            ],
+            "title": "Verification",
             "type": "string"
           }
         },
         "required": [
-          "text"
+          "text",
+          "needs_review"
         ],
         "title": "Decision",
+        "type": "object"
+      },
+      "Evidence": {
+        "description": "Нотолгоо: яг ямар сегментээс, ямар үгчилсэн хэсгийг иш татсан.",
+        "properties": {
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "segment_id": {
+            "title": "Segment Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "segment_id",
+          "quote"
+        ],
+        "title": "Evidence",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -487,6 +620,40 @@
           "email"
         ],
         "title": "InviteRequest",
+        "type": "object"
+      },
+      "ItemReviewBody": {
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "edited",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "title": "ItemReviewBody",
         "type": "object"
       },
       "MeetingCreate": {
@@ -579,6 +746,28 @@
             "title": "Action Items",
             "type": "array"
           },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
           "decisions": {
             "default": [],
             "items": {
@@ -586,6 +775,16 @@
             },
             "title": "Decisions",
             "type": "array"
+          },
+          "minutes_status": {
+            "default": "draft",
+            "enum": [
+              "draft",
+              "in_review",
+              "approved"
+            ],
+            "title": "Minutes Status",
+            "type": "string"
           },
           "open_questions": {
             "default": [],
@@ -904,6 +1103,24 @@
           "role"
         ],
         "title": "MemberResponse",
+        "type": "object"
+      },
+      "MinutesStatusBody": {
+        "properties": {
+          "status": {
+            "enum": [
+              "draft",
+              "in_review",
+              "approved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "MinutesStatusBody",
         "type": "object"
       },
       "OpenQuestion": {
@@ -2474,6 +2691,134 @@
           }
         },
         "summary": "Get Minutes",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/minutes/status": {
+      "put": {
+        "description": "Минутын төлөв: draft → in_review → approved. Батлах нь зөвхөн эзэн/админ. Агуулга өөрчлөгдвөл батлалт автоматаар цуцлагдана.",
+        "operationId": "set_minutes_status_api_meetings__meeting_id__minutes_status_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "title": "Meeting Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MinutesStatusBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Minutes Status Api Meetings  Meeting Id  Minutes Status Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Minutes Status",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/minutes/{kind}/{index}/review": {
+      "put": {
+        "description": "Шийдвэр/даалгавар бүрийг хүн хүлээн авах (accepted), засах (edited, text-тэй) эсвэл татгалзах (rejected).",
+        "operationId": "review_minutes_item_api_meetings__meeting_id__minutes__kind___index__review_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "title": "Meeting Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemReviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Minutes Item Api Meetings  Meeting Id  Minutes  Kind   Index  Review Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Minutes Item",
         "tags": [
           "meetings"
         ]

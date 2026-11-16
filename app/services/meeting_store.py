@@ -477,8 +477,9 @@ def list_meeting_contents(
     date_to: Optional[str] = None,
     meeting_ids: Optional[list[str]] = None,
     participant: Optional[str] = None,
+    limit: int = 200,
 ) -> list[dict]:
-    """Ask Minuto-д: бичвэртэй хурлуудын бичвэр, тэмдэглэл (шинэ нь эхэндээ)."""
+    """Ask Minuto-д: бичвэртэй хурлуудын бичвэр, тэмдэглэл (шинэ нь эхэндээ). limit: санах ой, зардлыг хязгаарлахын тулд хамгийн сүүлийн N хурал (F-26)."""
     from datetime import datetime
     with session_scope() as s:
         member_ws = access.accessible_workspace_ids(s, owner_id)
@@ -510,7 +511,7 @@ def list_meeting_contents(
             q = q.where(Meeting.participants.is_not(None))
             rows = s.scalars(q.order_by(Meeting.created_at.desc())).all()
             # Python дээр шүүх (JSON contains)
-            rows = [m for m in rows if m.participants and participant in m.participants]
+            rows = [m for m in rows if m.participants and participant in m.participants][:limit]
             return [
                 {
                     "id": m.id,
@@ -521,7 +522,7 @@ def list_meeting_contents(
                 }
                 for m in rows
             ]
-        rows = s.scalars(q.order_by(Meeting.created_at.desc())).all()
+        rows = s.scalars(q.order_by(Meeting.created_at.desc()).limit(limit)).all()
         return [
             {
                 "id": m.id,

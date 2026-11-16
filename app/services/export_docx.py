@@ -9,6 +9,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 
+from app.services.export_common import DRAFT_NOTICE_MN, STATUS_MN, split_decisions, status_line
 from app.models.minutes import MeetingMinutes
 
 
@@ -62,6 +63,22 @@ def generate_meeting_docx(
         r = p.add_run(value)
         r.font.size = Pt(10)
 
+    # Батлалтын төлөв: AI-ийн гаргасан ноорог хүн батлах хүртэл тодорхой тэмдэглэгдэнэ
+    status_text, approved = status_line(minutes)
+    sp = doc.add_paragraph()
+    sp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sr = sp.add_run(f"Төлөв: {status_text}")
+    sr.bold = True
+    sr.font.size = Pt(10)
+    sr.font.color.rgb = RGBColor(40, 120, 70) if approved else RGBColor(180, 90, 0)
+    if not approved:
+        np_ = doc.add_paragraph()
+        np_.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        nr = np_.add_run(DRAFT_NOTICE_MN)
+        nr.italic = True
+        nr.font.size = Pt(9)
+        nr.font.color.rgb = RGBColor(180, 90, 0)
+
     doc.add_paragraph()  # Spacer
 
     # Summary
@@ -79,14 +96,24 @@ def generate_meeting_docx(
                 p.add_run(f"\n{topic.description}")
 
     # Decisions
-    if minutes.decisions:
+    confirmed, other = split_decisions(minutes)
+    if confirmed:
         doc.add_heading("Шийдвэрүүд", level=1)
-        for i, decision in enumerate(minutes.decisions, 1):
+        for i, decision in enumerate(confirmed, 1):
             p = doc.add_paragraph()
             run = p.add_run(f"{i}. {decision.text}")
             run.bold = True
+            if decision.needs_review and not approved:
+                p.add_run("  ⚠ шалгах")
             if decision.rationale:
                 p.add_run(f"\n   Шалтгаан: {decision.rationale}")
+    if other:
+        # Санал, эргэлзээтэй, татгалзсан зүйл нь шийдвэр БИШ — тусад нь, төлөвтэй нь харуулна
+        doc.add_heading("Санал, тодорхойгүй зүйлс (шийдвэр биш)", level=1)
+        for decision in other:
+            p = doc.add_paragraph()
+            run = p.add_run(f"• [{STATUS_MN.get(decision.status, decision.status)}] {decision.text}")
+            run.italic = True
 
     # Action Items
     if minutes.action_items:

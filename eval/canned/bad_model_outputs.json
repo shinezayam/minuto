@@ -1,0 +1,44 @@
+{
+  "synthetic-release-meeting": {
+    "title": "Т",
+    "summary": "С",
+    "decisions": [
+      {
+        "text": "Үнийг 50% бууруулна",
+        "status": "confirmed",
+        "evidence": [
+          {
+            "segment_id": "seg_2",
+            "quote": "үнийг бууруулахаар шийдсэн"
+          }
+        ]
+      },
+      {
+        "text": "Маркетингийн төсвийг Бат батлана",
+        "status": "confirmed"
+      }
+    ],
+    "action_items": [
+      {
+        "task": "Тест хийх тайлан бэлдэх",
+        "owner": "Бат",
+        "due_date": "Баасан"
+      },
+      {
+        "task": "Шинэ ажилтан авах",
+        "owner": "Сараа"
+      }
+    ]
+  },
+  "synthetic-garbled-speech": {
+    "title": "Т",
+    "summary": "С",
+    "decisions": [
+      {
+        "text": "Дараа сар төсөл эхэлнэ",
+        "status": "confirmed"
+      }
+    ],
+    "action_items": []
+  }
+}

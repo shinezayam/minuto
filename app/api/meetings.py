@@ -10,8 +10,9 @@ import mimetypes
 import re
 import shutil
 
-from typing import Optional
+from typing import Literal, Optional
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -28,7 +29,7 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
-from app.services import audio_store, jobs, transcript_edit
+from app.services import audio_store, jobs, minutes_review, transcript_edit
 from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
@@ -278,22 +279,18 @@ async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(curre
     from app.services import llm as llm_mod
     
     transcript = [TranscriptSegment(**seg) for seg in transcript_data]
-    participants = meeting.participants or []
-    
     try:
-        # Шинэ summary үүсгэх
+        # Зөвхөн хураангуйг (богино дуудлага) шинэчилнэ; бусад хэсэг хөндөгдөхгүй
         ctx = meeting_store.get_meeting_context(meeting_id)
-        minutes = await llm_mod.llm_provider.generate_minutes(
-            transcript, participants, template=ctx["template"], language=ctx["language"]
-        )
-        
-        # Одоогийн minutes-аас summary-г шинэчлэх
+        summary = await llm_mod.llm_provider.generate_summary(transcript, language=ctx["language"])
+
         current_minutes = meeting_store.get_meeting_minutes(meeting_id)
         if current_minutes:
-            current_minutes["summary"] = minutes.summary
+            current_minutes["summary"] = summary
+            minutes_review.invalidate_approval(current_minutes)  # агуулга өөрчлөгдсөн → дахин батлах шаардлагатай
             meeting_store.update_meeting_minutes(meeting_id, current_minutes)
-        
-        return {"meeting_id": meeting_id, "summary": minutes.summary}
+
+        return {"meeting_id": meeting_id, "summary": summary}
     except Exception:  # noqa: BLE001 — дэлгэрэнгүйг зөвхөн лог руу бичнэ
         logger.exception("Meeting %s summary regeneration failed", meeting_id)
         raise HTTPException(status_code=500, detail="SUMMARY_FAILED: Хураангуйг дахин үүсгэж чадсангүй")
@@ -343,7 +340,16 @@ def update_action_items(
         data["source_segment_ids"] = [i for i in data["source_segment_ids"] if i in valid_ids]
         cleaned.append(data)
 
+    # Хүний шалгалтын тэмдэглэл, ишлэлийг хадгалах: ижил даалгаврыг (task) олвол өмнөх evidence/review-г хэвээр үлдээнэ
+    previous = {str(i.get("task")): i for i in current_items if isinstance(i, dict)}
+    for item in cleaned:
+        old = previous.get(item["task"])
+        if old:
+            for key in ("evidence", "verification", "confidence", "review"):
+                if key in old:
+                    item[key] = old[key]
     current_minutes["action_items"] = cleaned
+    minutes_review.invalidate_approval(current_minutes)
     meeting_store.update_meeting_minutes(meeting_id, current_minutes)
     return {"meeting_id": meeting_id, "action_items": cleaned, "etag": _action_items_etag(cleaned)}
 
@@ -496,6 +502,45 @@ def get_minutes(meeting_id: str, user: UserResponse = Depends(current_user)) -> 
             detail = "Minutes not generated yet. Process the meeting first."
         raise HTTPException(status_code=404, detail=detail)
     return MeetingMinutes(**{**minutes, "prepared_by": _prepared_by(user)})
+
+
+class MinutesStatusBody(BaseModel):
+    status: Literal["draft", "in_review", "approved"]
+
+
+@router.put("/{meeting_id}/minutes/status")
+def set_minutes_status(meeting_id: str, body: MinutesStatusBody, user: UserResponse = Depends(current_user)) -> dict:
+    """Минутын төлөв: draft → in_review → approved. Батлах нь зөвхөн эзэн/админ. Агуулга өөрчлөгдвөл батлалт автоматаар цуцлагдана."""
+    meeting = _owned(meeting_id, user, "edit")
+    minutes = meeting_store.get_meeting_minutes(meeting_id)
+    if not minutes:
+        raise HTTPException(status_code=404, detail="NO_MINUTES: Хурлын бичиг үүсээгүй байна")
+    try:
+        minutes_review.set_status(minutes, body.status, user.name or user.email, can_approve=meeting.my_role in ("owner", "admin"))
+    except minutes_review.ReviewError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
+    meeting_store.update_meeting_minutes(meeting_id, minutes)
+    return {"meeting_id": meeting_id, "minutes_status": minutes["minutes_status"], "approved_by": minutes.get("approved_by"), "approved_at": minutes.get("approved_at")}
+
+
+class ItemReviewBody(BaseModel):
+    decision: Optional[Literal["accepted", "edited", "rejected"]] = None
+    text: Optional[str] = Field(default=None, max_length=1000)
+
+
+@router.put("/{meeting_id}/minutes/{kind}/{index}/review")
+def review_minutes_item(meeting_id: str, kind: str, index: int, body: ItemReviewBody, user: UserResponse = Depends(current_user)) -> dict:
+    """Шийдвэр/даалгавар бүрийг хүн хүлээн авах (accepted), засах (edited, text-тэй) эсвэл татгалзах (rejected)."""
+    _owned(meeting_id, user, "edit")
+    minutes = meeting_store.get_meeting_minutes(meeting_id)
+    if not minutes:
+        raise HTTPException(status_code=404, detail="NO_MINUTES: Хурлын бичиг үүсээгүй байна")
+    try:
+        minutes_review.review_item(minutes, kind, index, body.decision, body.text)
+    except minutes_review.ReviewError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
+    meeting_store.update_meeting_minutes(meeting_id, minutes)
+    return {"meeting_id": meeting_id, "minutes": MeetingMinutes(**minutes).model_dump(exclude={"prepared_by"})}
 
 
 @router.post("/{meeting_id}/ws-ticket")

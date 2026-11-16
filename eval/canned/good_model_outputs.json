@@ -1,0 +1,52 @@
+{
+  "synthetic-release-meeting": {
+    "title": "Т",
+    "summary": "С",
+    "decisions": [
+      {
+        "text": "Шинэ хувилбарыг Баасан гарагт гаргана",
+        "status": "confirmed",
+        "evidence": [
+          {
+            "segment_id": "seg_1",
+            "quote": "Шинэ хувилбарыг Баасан гарагт гаргахаар шийдлээ"
+          }
+        ]
+      },
+      {
+        "text": "Үнийг бууруулах",
+        "status": "proposed",
+        "evidence": [
+          {
+            "segment_id": "seg_2",
+            "quote": "үнийг бууруулж болох юм"
+          }
+        ]
+      }
+    ],
+    "action_items": [
+      {
+        "task": "Тест хийх тайлан бэлдэх",
+        "owner": "Дорж",
+        "due_date": "Даваа",
+        "evidence": [
+          {
+            "segment_id": "seg_3",
+            "quote": "тест хийх тайлангаа Даваа гарагт бэлдэнэ"
+          }
+        ]
+      }
+    ]
+  },
+  "synthetic-garbled-speech": {
+    "title": "Т",
+    "summary": "С",
+    "decisions": [
+      {
+        "text": "Пүрэв гарагт уулзана",
+        "status": "unclear"
+      }
+    ],
+    "action_items": []
+  }
+}
