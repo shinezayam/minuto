@@ -56,7 +56,7 @@ async def run(meeting_id: str) -> None:
                 logger.info("Meeting %s: applied %d vocabulary corrections", meeting_id, n)
                 transcript = [TranscriptSegment(**s) for s in fixed]
         # Тэмдэглэл гаргахаас өмнө хадгална — LLM алдаа гарсан ч бичвэр (хэсэг доторх яригчтай) алга болохгүй
-        meeting_store.update_meeting_transcript(meeting_id, [s.model_dump() for s in transcript])
+        meeting_store.update_meeting_transcript(meeting_id, [s.model_dump() for s in transcript], snapshot_kind="reprocess")
         if not transcript:
             meeting_store.finish_processing(meeting_id, "NO_SPEECH: Бичлэгээс яриа танигдсангүй")
             return

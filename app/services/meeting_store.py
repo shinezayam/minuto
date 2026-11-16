@@ -5,9 +5,9 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
-from app.db import Contact, Meeting, MeetingTemplate, User, session_scope
+from app.db import Contact, Meeting, MeetingTemplate, TranscriptRevision, User, session_scope
 from app.models.schemas import ContactResponse, MeetingCreate, MeetingResponse, MeetingStatus, MeetingUpdate
 
 
@@ -262,40 +262,86 @@ def fail_interrupted_processing() -> int:
 
 # ---------- Бичвэр, тэмдэглэл ----------
 
-def update_meeting_transcript(meeting_id: str, transcript: list) -> None:
+def update_meeting_transcript(meeting_id: str, transcript: list, snapshot_kind: Optional[str] = None) -> None:
+    """snapshot_kind өгвөл (жишээ нь "reprocess") дарж бичихээс өмнөх бичвэрийг түүхэнд хадгална — хэрэглэгчийн засвар алга болохгүй."""
     with session_scope() as s:
+        if snapshot_kind:
+            m = s.get(Meeting, meeting_id)
+            if m and m.transcript:
+                _snapshot(s, meeting_id, list(m.transcript), None, snapshot_kind)
         s.execute(update(Meeting).where(Meeting.id == meeting_id).values(transcript=transcript, updated_at=_now()))
 
 
-def update_transcript_segments(meeting_id: str, updates: list[dict]) -> list:
-    """Сегментүүдийг засварлах. updates: [{"id": "seg_1", "text": "...", "speaker": "..."}]"""
+MAX_REVISIONS = 30  # нэг хурлын түүхийн дээд тоо (хуучнаас нь устгана)
+
+
+def _snapshot(s, meeting_id: str, transcript: Optional[list], user_id: Optional[str], kind: str, changed: Optional[list] = None) -> None:
+    """Өөрчлөлтөөс ӨМНӨХ бичвэрийг түүхэнд хадгална; хязгаараас хэтэрвэл хуучныг нь устгана."""
+    if not transcript:
+        return
+    s.add(TranscriptRevision(meeting_id=meeting_id, user_id=user_id, kind=kind, changed=changed or [], transcript=list(transcript)))
+    s.flush()
+    old = s.scalars(
+        select(TranscriptRevision.id)
+        .where(TranscriptRevision.meeting_id == meeting_id)
+        .order_by(TranscriptRevision.created_at.desc(), TranscriptRevision.id)
+        .offset(MAX_REVISIONS)
+    ).all()
+    if old:
+        s.execute(delete(TranscriptRevision).where(TranscriptRevision.id.in_(old)))
+
+
+def edit_transcript(meeting_id: str, owner_id: str, edits: list[dict], if_match: Optional[str] = None) -> dict:
+    """Сегмент засварлах: боловсруулж буй үед татгалзана, зөрчилдөөнийг шалгана, түүх хадгална. Буцаах: {segments, etag}."""
+    from app.services.transcript_edit import apply_edits, etag
+
     with session_scope() as s:
-        m = s.get(Meeting, meeting_id)
-        if not m or not m.transcript:
-            return []
-        
-        transcript = list(m.transcript)
-        update_map = {u["id"]: u for u in updates}
-        
-        for seg in transcript:
-            seg_id = seg.get("id")
-            if seg_id in update_map:
-                upd = update_map[seg_id]
-                if "text" in upd and upd["text"] is not None:
-                    seg["text"] = upd["text"]
-                if "speaker" in upd and upd["speaker"] is not None:
-                    seg["speaker"] = upd["speaker"]
-                # turns дотор засварлах
-                if "turns" in seg and isinstance(seg["turns"], list):
-                    for turn in seg["turns"]:
-                        if "text" in upd and upd["text"] is not None:
-                            turn["text"] = upd["text"]
-                        if "speaker" in upd and upd["speaker"] is not None:
-                            turn["speaker"] = upd["speaker"]
-        
-        m.transcript = transcript
+        m = s.get(Meeting, meeting_id, with_for_update=True)
+        if not m or m.owner_id != owner_id:
+            raise LookupError(meeting_id)
+        if m.status == MeetingStatus.PROCESSING.value:
+            raise TranscriptBusyError()
+        current = list(m.transcript or [])
+        if if_match and if_match.strip('"') != etag(current):
+            raise TranscriptConflictError()
+        updated, changed = apply_edits(current, edits)
+        if changed:
+            _snapshot(s, meeting_id, current, owner_id, "edit", changed)
+            m.transcript = updated
+            m.updated_at = _now()
+        return {"segments": updated, "etag": etag(updated), "changed": changed}
+
+
+def list_revisions(meeting_id: str) -> list[dict]:
+    with session_scope() as s:
+        rows = s.scalars(
+            select(TranscriptRevision)
+            .where(TranscriptRevision.meeting_id == meeting_id)
+            .order_by(TranscriptRevision.created_at.desc(), TranscriptRevision.id)
+        ).all()
+        return [
+            {"id": r.id, "kind": r.kind, "user_id": r.user_id, "created_at": r.created_at, "changed": list(r.changed or []), "segments": len(r.transcript or [])}
+            for r in rows
+        ]
+
+
+def restore_revision(meeting_id: str, owner_id: str, revision_id: str) -> dict:
+    """Сонгосон хувилбарыг сэргээнэ; одоогийн бичвэрийг мөн түүхэнд хадгалж, сэргээлтийг буцаах боломжтой болгоно."""
+    from app.services.transcript_edit import etag
+
+    with session_scope() as s:
+        m = s.get(Meeting, meeting_id, with_for_update=True)
+        if not m or m.owner_id != owner_id:
+            raise LookupError(meeting_id)
+        if m.status == MeetingStatus.PROCESSING.value:
+            raise TranscriptBusyError()
+        rev = s.get(TranscriptRevision, revision_id)
+        if not rev or rev.meeting_id != meeting_id:
+            raise LookupError(revision_id)
+        _snapshot(s, meeting_id, list(m.transcript or []), owner_id, "restore")
+        m.transcript = list(rev.transcript)
         m.updated_at = _now()
-        return transcript
+        return {"segments": list(rev.transcript), "etag": etag(list(rev.transcript))}
 
 
 def get_meeting_transcript(meeting_id: str) -> list:
@@ -311,6 +357,10 @@ def update_meeting_minutes(meeting_id: str, minutes: dict) -> None:
 
 class TranscriptBusyError(Exception):
     """Боловсруулж байх үед бичвэрийг засахгүй (боловсруулалт дарж бичнэ)."""
+
+
+class TranscriptConflictError(Exception):
+    """Засвар хийж эхлэхээс хойш бичвэр өөр газраас өөрчлөгдсөн."""
 
 
 def replace_in_meeting(
@@ -334,6 +384,7 @@ def replace_in_meeting(
         segments, replaced = replace_in_segments(list(m.transcript or []), pattern, replacement)
         values: dict = {}
         if replaced:
+            _snapshot(s, meeting_id, list(m.transcript or []), m.owner_id, "replace")
             values["transcript"] = segments
         minutes_replaced = 0
         if include_minutes and m.minutes:

@@ -72,16 +72,23 @@ class TranscriptReplace(BaseModel):
     remember: bool = True
 
 
+class SpeakerTurnIn(BaseModel):
+    speaker: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)]] = None
+    text: Annotated[str, StringConstraints(max_length=20_000)]
+
+
 class TranscriptSegmentUpdate(BaseModel):
-    """Нэг сегмент засварлах."""
-    id: str
-    text: Optional[str] = None
-    speaker: Optional[str] = None
+    """Нэг сегмент засварлах. start_ms/end_ms/id өөрчлөгдөхгүй. Олон хүнтэй сегментэд turn_index эсвэл бүтэн turns заавал."""
+    id: Annotated[str, StringConstraints(max_length=64)]
+    text: Optional[Annotated[str, StringConstraints(max_length=20_000)]] = None
+    speaker: Optional[Annotated[str, StringConstraints(max_length=100)]] = None
+    turn_index: Optional[int] = Field(default=None, ge=0, le=500)
+    turns: Optional[List[SpeakerTurnIn]] = Field(default=None, max_length=500)
 
 
 class TranscriptUpdate(BaseModel):
     """Бичвэр засварлах - сегментүүд."""
-    segments: List[TranscriptSegmentUpdate]
+    segments: List[TranscriptSegmentUpdate] = Field(max_length=500)
 
 
 class MeetingResponse(BaseModel):

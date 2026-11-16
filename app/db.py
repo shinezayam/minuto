@@ -124,6 +124,23 @@ class MeetingTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class TranscriptRevision(Base):
+    """Бичвэрийн өөрчлөлтийн түүх (append-only). Өөрчлөлт хийхээс ӨМНӨХ бичвэрийн хуулбарыг хадгална → сэргээх боломжтой."""
+
+    __tablename__ = "transcript_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    meeting_id: Mapped[str] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    # Хэн өөрчилсөн (боловсруулалт, систем бол NULL)
+    user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # edit | replace | restore | reprocess
+    kind: Mapped[str] = mapped_column(String(20))
+    # Өөрчлөгдсөн сегментийн id-нууд
+    changed: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    transcript: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
 class Workspace(Base):
     """Workspace - хэрэглэгчийн хувийн эсвэл багийн ажлын орон зай."""
 

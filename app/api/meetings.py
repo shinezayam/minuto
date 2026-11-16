@@ -28,6 +28,7 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
+from app.services import transcript_edit
 from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
@@ -371,16 +372,53 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
 @router.get("/{meeting_id}/transcript")
 def get_transcript(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     _owned(meeting_id, user)
-    return {"meeting_id": meeting_id, "segments": meeting_store.get_meeting_transcript(meeting_id)}
+    segments = meeting_store.get_meeting_transcript(meeting_id)
+    return {"meeting_id": meeting_id, "segments": segments, "etag": transcript_edit.etag(segments)}
 
 
 @router.put("/{meeting_id}/transcript")
-def update_transcript(meeting_id: str, body: TranscriptUpdate, user: UserResponse = Depends(current_user)) -> dict:
-    """Бичвэрийн сегментүүдийг засварлах."""
+def update_transcript(
+    meeting_id: str,
+    body: TranscriptUpdate,
+    user: UserResponse = Depends(current_user),
+    if_match: Optional[str] = Header(default=None),
+) -> dict:
+    """
+    Бичвэрийн сегментүүдийг засварлах. Олон хүнтэй сегментэд turn_index (эсвэл бүтэн turns) заавал.
+    If-Match: GET-ээс авсан etag — хойшоо өөрчлөгдсөн бол 412. Боловсруулж байвал 409. Өмнөх хувилбар түүхэнд хадгалагдана.
+    """
     _owned(meeting_id, user)
-    updates = [s.model_dump(exclude_none=True) for s in body.segments]
-    transcript = meeting_store.update_transcript_segments(meeting_id, updates)
-    return {"meeting_id": meeting_id, "segments": transcript}
+    edits = [s.model_dump(exclude_none=True) for s in body.segments]
+    try:
+        result = meeting_store.edit_transcript(meeting_id, user.id, edits, if_match)
+    except transcript_edit.EditError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
+    except meeting_store.TranscriptBusyError:
+        raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Боловсруулж дуусахыг хүлээнэ үү")
+    except meeting_store.TranscriptConflictError:
+        raise HTTPException(status_code=412, detail="CONFLICT: Бичвэрийг өөр газраас өөрчилсөн байна. Дахин ачаалж үзнэ үү.")
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return {"meeting_id": meeting_id, "segments": result["segments"], "etag": result["etag"]}
+
+
+@router.get("/{meeting_id}/transcript/revisions")
+def list_transcript_revisions(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    _owned(meeting_id, user)
+    return {"meeting_id": meeting_id, "revisions": meeting_store.list_revisions(meeting_id)}
+
+
+@router.post("/{meeting_id}/transcript/revisions/{revision_id}/restore")
+def restore_transcript_revision(meeting_id: str, revision_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    """Түүхээс бичвэрийг сэргээнэ. Одоогийн бичвэр мөн түүхэнд хадгалагдана (сэргээлтийг буцаах боломжтой)."""
+    _owned(meeting_id, user)
+    try:
+        result = meeting_store.restore_revision(meeting_id, user.id, revision_id)
+    except meeting_store.TranscriptBusyError:
+        raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Боловсруулж дуусахыг хүлээнэ үү")
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    return {"meeting_id": meeting_id, "segments": result["segments"], "etag": result["etag"]}
 
 
 @router.post("/{meeting_id}/transcript/replace")
