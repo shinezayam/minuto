@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     # (диск нь ажлын кэш болно). supabase_url, supabase_service_role_key, supabase_audio_bucket (private) шаардлагатай.
     audio_storage_backend: str = "local"
 
+    # ---- Billing (BILLING_PLAN.md). Default-оор бүгд унтраалттай: одоогийн үйл ажиллагаа өөрчлөгдөхгүй.
+    # off = хүснэгтэд хүрэхгүй | shadow = минутыг бүртгэнэ, юуг ч хаахгүй | enforce = минут дууссан бол шинэ боловсруулалт хаана
+    billing_metering: str = "off"
+    # Төлбөр авах товчийг нээнэ (Wire түлхүүр тохируулсны дараа л true болгоно)
+    billing_checkout_enabled: bool = False
+    # Wire (wire.mn) төлбөрийн API: түлхүүр, webhook secret-ийг Render env-д л оруулна, git/chat-д хэзээ ч бичихгүй
+    wire_api_key: str = ""
+    wire_webhook_secret: str = ""
+    wire_base_url: str = "https://api.wire.mn"
+    # Төлсний дараа хөтчийг буцаах frontend хаяг. Хоосон бол CORS_ORIGINS-ийн эхнийх.
+    frontend_url: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @model_validator(mode="after")
@@ -98,7 +110,19 @@ class Settings(BaseSettings):
             self.qwen_model = "qwen-plus"
         if not self.omni_model:
             self.omni_model = "qwen3-omni-flash"
+        self.wire_api_key = self.wire_api_key.strip().strip("\"'").strip()
+        self.wire_webhook_secret = self.wire_webhook_secret.strip().strip("\"'").strip()
+        self.billing_metering = (self.billing_metering or "off").strip().lower()
+        if self.billing_metering not in ("off", "shadow", "enforce"):
+            raise ValueError("BILLING_METERING нь off | shadow | enforce байх ёстой")
         return self
+
+    @property
+    def public_frontend_url(self) -> str:
+        if self.frontend_url.strip():
+            return self.frontend_url.strip().rstrip("/")
+        first = next((o.strip() for o in self.cors_origins.split(",") if o.strip()), "http://localhost:3000")
+        return first.rstrip("/")
 
     @property
     def is_production(self) -> bool:

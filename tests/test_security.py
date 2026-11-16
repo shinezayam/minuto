@@ -22,6 +22,9 @@ PUBLIC = {
     ("GET", "/api/docs"),
     ("GET", "/api/redoc"),
     ("GET", "/docs/oauth2-redirect"),
+    ("GET", "/api/billing/plans"),  # нийтийн үнийн хүснэгт
+    ("POST", "/api/billing/webhooks/wire"),  # Wire-ийн гарын үсгээр (HMAC) шалгагдана
+    ("POST", "/api/contact-requests"),  # Enterprise хүсэлт: rate limit + validation
 }
 # WebSocket өөрөө токеныг шалгадаг (current_user dependency ашиглах боломжгүй)
 SELF_AUTH_WS = {"/ws/meetings/{meeting_id}/audio"}

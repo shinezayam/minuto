@@ -416,6 +416,104 @@
         "title": "Body_upload_audio_api_meetings__meeting_id__upload_post",
         "type": "object"
       },
+      "CancelIn": {
+        "properties": {
+          "workspace_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "title": "CancelIn",
+        "type": "object"
+      },
+      "CheckoutIn": {
+        "properties": {
+          "plan_code": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Plan Code",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "plan_code"
+        ],
+        "title": "CheckoutIn",
+        "type": "object"
+      },
+      "ContactIn": {
+        "properties": {
+          "company": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company"
+          },
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "message"
+        ],
+        "title": "ContactIn",
+        "type": "object"
+      },
       "ContactListResponse": {
         "properties": {
           "contacts": {
@@ -2032,6 +2130,301 @@
         "summary": "Register",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/billing/cancel": {
+      "post": {
+        "operationId": "cancel_api_billing_cancel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Api Billing Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/checkout": {
+      "post": {
+        "operationId": "checkout_api_billing_checkout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Checkout Api Billing Checkout Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Checkout",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/me": {
+      "get": {
+        "operationId": "get_billing_me_api_billing_me_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Billing Me Api Billing Me Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Billing Me",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/orders": {
+      "get": {
+        "operationId": "list_orders_api_billing_orders_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Orders Api Billing Orders Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Orders",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/orders/{order_id}": {
+      "get": {
+        "operationId": "get_order_api_billing_orders__order_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Order Api Billing Orders  Order Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Order",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/plans": {
+      "get": {
+        "operationId": "get_plans_api_billing_plans_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Plans Api Billing Plans Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Plans",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/webhooks/wire": {
+      "post": {
+        "description": "Wire-ийн webhook. Гарын үсэг буруу бол 400. Биеийн агуулгад итгэхгүй: intent-ийг сервер талаас дахин шалгана.",
+        "operationId": "wire_webhook_api_billing_webhooks_wire_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Wire Webhook Api Billing Webhooks Wire Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Wire Webhook",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/contact-requests": {
+      "post": {
+        "operationId": "contact_request_api_contact_requests_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Contact Request Api Contact Requests Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Contact Request",
+        "tags": [
+          "billing"
         ]
       }
     },

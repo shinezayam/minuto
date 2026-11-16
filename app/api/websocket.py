@@ -12,7 +12,7 @@ from app.security import ws_origin_allowed
 from app.services import access
 from app.models.schemas import WSAck, WSError, WSRecordingReady
 from app.services.audio_ingest import audio_ingest
-from app.services import live_transcriber, meeting_store, processing
+from app.services import billing, live_transcriber, meeting_store, processing
 from app.services import upload_guard as guard
 from app.services.auth import user_from_token, verify_ticket
 
@@ -77,6 +77,15 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
         await _send_error(websocket, e.code, e.message)
         await websocket.close(code=4413)
         return
+
+    # Минут дууссан бол ШИНЭ бичлэг эхлэхгүй (enforce). Аль хэдийн хэсэг ирсэн бичлэгийн дахин холболтыг хэзээ ч хаахгүй.
+    if billing.enforcing() and not processing.has_audio(meeting_id):
+        try:
+            await asyncio.to_thread(billing.check_can_start_recording, meeting_id, user.id)
+        except billing.BillingBlocked as e:
+            await _send_error(websocket, e.code, e.message)
+            await websocket.close(code=4402)
+            return
 
     _active_connections.setdefault(meeting_id, set()).add(websocket)
     pending_meta: Optional[dict] = None

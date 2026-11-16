@@ -29,7 +29,7 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
-from app.services import audio_store, jobs, minutes_review, transcript_edit
+from app.services import audio_store, billing, jobs, minutes_review, transcript_edit
 from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
@@ -404,7 +404,14 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
             await asyncio.to_thread(audio_store.persist, meeting_id)
         except audio_store.StorageUnavailable:
             logger.exception("Audio persist before processing failed for meeting %s", meeting_id)
+    # Минут: off бол юу ч хийхгүй, shadow бол зөвхөн бүртгэнэ, enforce бол хүрэлцэхгүй үед 402
+    try:
+        usage_id = await asyncio.to_thread(billing.reserve, meeting_id, user.id)
+    except billing.BillingBlocked as e:
+        raise HTTPException(status_code=402, detail=e.detail) from e
     if not meeting_store.try_begin_processing(meeting_id):
+        if usage_id and not jobs.has_active(meeting_id):
+            billing.release(usage_id)
         raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Энэ хурлыг боловсруулж байна")
     await live_transcriber.stop(meeting_id)
     try:

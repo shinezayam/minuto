@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -16,6 +17,7 @@ from app.services.auth import current_user
 from app.security import RateLimitMiddleware, RequestLogMiddleware, SecurityHeadersMiddleware
 from app.api.ask import router as ask_router
 from app.api.auth import router as auth_router
+from app.api.billing import router as billing_router
 from app.api.contacts import router as contacts_router
 from app.api.meetings import router as meetings_router
 from app.api.templates import router as templates_router
@@ -26,6 +28,20 @@ from app.services import live_transcriber, meeting_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+async def _billing_maintenance() -> None:
+    """10 мин тутам: өнчин минутын reserve-ийг цэгцэлж, webhook алдагдсан pending төлбөрийг шалгана.
+    Billing унтраалттай бол юу ч хийхгүй (DB-д хандахгүй)."""
+    from app.services import billing
+
+    while True:
+        try:
+            await asyncio.to_thread(billing.reconcile)
+            await asyncio.to_thread(billing.refresh_pending_orders)
+        except Exception:  # noqa: BLE001
+            logger.exception("billing maintenance failed")
+        await asyncio.sleep(600)
 
 
 @asynccontextmanager
@@ -43,7 +59,9 @@ async def lifespan(app: FastAPI):
 
     jobs.recover_on_startup()  # унасан ажлыг үргэлжлүүлнэ; ажилгүй "processing" хурлыг алдаатай болгоно
     jobs.ensure_workers()
+    billing_task = asyncio.create_task(_billing_maintenance(), name="billing-maintenance")
     yield
+    billing_task.cancel()
     await jobs.shutdown()  # ажиллаж буй ажил "running" хэвээр үлдэж, дараагийн эхлэлд үргэлжилнэ
     await live_transcriber.stop_all()
 
@@ -84,6 +102,7 @@ app.include_router(contacts_router)
 app.include_router(vocabulary_router)
 app.include_router(templates_router)
 app.include_router(workspaces_router)
+app.include_router(billing_router)
 
 
 @app.get("/api/health", response_model=HealthResponse)

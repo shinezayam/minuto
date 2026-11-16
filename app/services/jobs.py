@@ -204,8 +204,12 @@ async def execute(ctx: JobCtx) -> None:
 
     hb = asyncio.create_task(_heartbeat_loop(ctx.job_id))
     _running.add(ctx.job_id)
+    from app.services import billing
+
     try:
         ok = await asyncio.wait_for(processing.run(ctx.meeting_id, ctx), timeout=settings.job_timeout_sec)
+        # Ажлыг "дууссан" гэж тэмдэглэхээс ӨМНӨ минутыг эцэслэнэ (бичвэр хадгалагдсан бол хасна, үгүй бол чөлөөлнө)
+        await asyncio.to_thread(billing.settle, ctx.meeting_id)
         complete(ctx.job_id, bool(ok))
     except RetryLater as e:
         delay = requeue(ctx.job_id, str(e), ctx.attempts)
@@ -213,6 +217,7 @@ async def execute(ctx: JobCtx) -> None:
     except asyncio.TimeoutError:
         err = "TIMEOUT: Боловсруулалт хэт удсан тул зогсоолоо. Богино бичлэгээр дахин оролдоно уу."
         meeting_store.finish_processing(ctx.meeting_id, err)
+        await asyncio.to_thread(billing.settle, ctx.meeting_id)
         complete(ctx.job_id, False, err)
     except asyncio.CancelledError:
         raise  # shutdown: ажил "running" хэвээр үлдэж, дараагийн эхлэлд lease дуусаад үргэлжилнэ
@@ -220,6 +225,7 @@ async def execute(ctx: JobCtx) -> None:
         logger.exception("Job %s crashed", ctx.job_id)
         err = f"INTERNAL_ERROR: {type(e).__name__}"
         meeting_store.finish_processing(ctx.meeting_id, err)
+        await asyncio.to_thread(billing.settle, ctx.meeting_id)
         complete(ctx.job_id, False, err)
     finally:
         hb.cancel()

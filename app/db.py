@@ -7,7 +7,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, create_engine, text
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, create_engine, text
+from sqlalchemy import false as sa_false, true as sa_true
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -212,6 +213,120 @@ class Project(Base):
     color: Mapped[str] = mapped_column(String(7), default="#5965D8")  # hex color
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ---------------------------------------------------------------- Billing (revision 0005)
+
+_LIVE_USAGE = text("state IN ('reserved','debited')")
+_ACTIVE_SUB = text("status = 'active'")
+
+
+class Plan(Base):
+    """Багц: үнэ, минут нь зөвхөн энд (migration-оор seed) — клиентээс ирсэн үнэд хэзээ ч итгэхгүй."""
+
+    __tablename__ = "plans"
+
+    code: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    kind: Mapped[str] = mapped_column(String(10))  # free | paid | custom
+    minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    period_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    price_mnt: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    scope: Mapped[str] = mapped_column(String(10))  # user | workspace
+    sort: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
+
+
+class Subscription(Base):
+    """Нэг төлбөрт хугацаа (30 хоног). status: active | scheduled (дараагийн хугацаа) | expired."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        CheckConstraint("(user_id IS NULL) <> (workspace_id IS NULL)", name="ck_subscription_one_owner"),
+        Index("uq_subscriptions_active_user", "user_id", unique=True, sqlite_where=_ACTIVE_SUB, postgresql_where=_ACTIVE_SUB),
+        Index("uq_subscriptions_active_workspace", "workspace_id", unique=True, sqlite_where=_ACTIVE_SUB, postgresql_where=_ACTIVE_SUB),
+        Index("uq_subscriptions_order", "order_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    workspace_id: Mapped[Optional[str]] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True)
+    plan_code: Mapped[str] = mapped_column(ForeignKey("plans.code"))
+    status: Mapped[str] = mapped_column(String(10))
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
+    order_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UsageEvent(Base):
+    """Минутын ledger (append-only төлөвтэй): reserved → debited | released. FK-гүй: түүх устахгүй."""
+
+    __tablename__ = "usage_events"
+    __table_args__ = (
+        Index("ix_usage_events_scope", "scope_type", "scope_id", "created_at"),
+        # Ижил аудиог хоёр дахин хасахгүй (давхар /process, retry, дахин боловсруулалт)
+        Index("uq_usage_events_audio", "meeting_id", "audio_fingerprint", unique=True, sqlite_where=_LIVE_USAGE, postgresql_where=_LIVE_USAGE),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    scope_type: Mapped[str] = mapped_column(String(10))  # user | workspace
+    scope_id: Mapped[str] = mapped_column(String(36))
+    subscription_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    meeting_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    plan_code: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(10))  # live | upload
+    audio_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_source: Mapped[str] = mapped_column(String(10))  # probe | unknown
+    billable_minutes: Mapped[int] = mapped_column(Integer)
+    audio_fingerprint: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(10), index=True)  # reserved | debited | released
+    shadow: Mapped[bool] = mapped_column(Boolean)
+    decision: Mapped[str] = mapped_column(String(20))  # allowed | would_block | overdraft | would_overdraft
+    remaining_before: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PaymentOrder(Base):
+    """Төлбөрийн захиалга. paid нь эцсийн төлөв, өөрчлөгдөхгүй. Дүнг зөвхөн plans хүснэгтээс авна."""
+
+    __tablename__ = "payment_orders"
+    __table_args__ = (Index("uq_payment_orders_provider_ref", "provider", "provider_ref", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    workspace_id: Mapped[Optional[str]] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True)
+    plan_code: Mapped[str] = mapped_column(ForeignKey("plans.code"))
+    amount_mnt: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10), index=True)  # pending | paid | expired | failed | cancelled
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    payment: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # QR / redirect мэдээлэл (pending үед)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ContactRequest(Base):
+    """Enterprise үнийн санал авах хүсэлт."""
+
+    __tablename__ = "contact_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(320))
+    company: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    message: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="new")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
 _engine: Optional[Engine] = None

@@ -38,6 +38,17 @@ services:
       # - key: AUDIO_STORAGE_BACKEND
       #   value: supabase
       # - key: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_AUDIO_BUCKET  (sync: false)
+      # Billing (docs/BILLING.md): off → shadow (1 долоо хоног ажиглах) → enforce. Түлхүүрүүд dashboard дээр гараар.
+      - key: BILLING_METERING
+        value: "off"
+      - key: BILLING_CHECKOUT_ENABLED
+        value: "false"
+      - key: WIRE_API_KEY
+        sync: false
+      - key: WIRE_WEBHOOK_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
       - key: AUDIO_STORAGE_PATH
         value: ./audio_storage
       - key: MAX_AUDIO_CHUNK_BYTES
