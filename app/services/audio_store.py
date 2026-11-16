@@ -10,6 +10,7 @@ AUDIO_STORAGE_BACKEND=local үед (default) энэ бүхэн no-op: өмнөх
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 import shutil
 import threading
 from pathlib import Path
@@ -92,6 +93,24 @@ class SupabaseStore:
         self._check(r, "list")
         return [f"{prefix.rstrip('/')}/{o['name']}" for o in r.json() if o.get("name")]
 
+    def sizes(self, prefix: str) -> Dict[str, int]:
+        """Объект бүрийн хэмжээ (байт): list хариуны metadata.size. Хуулсны дараа шалгахад ашиглана."""
+        try:
+            r = self._client.post(
+                f"{self.base}/object/list/{quote(self.bucket)}",
+                json={"prefix": prefix.rstrip("/"), "limit": 1000},
+                headers=self._headers,
+            )
+        except httpx.HTTPError as e:
+            raise StorageUnavailable(f"list: {type(e).__name__}") from e
+        self._check(r, "list")
+        out: Dict[str, int] = {}
+        for o in r.json():
+            size = (o.get("metadata") or {}).get("size")
+            if o.get("name") and isinstance(size, int):
+                out[f"{prefix.rstrip('/')}/{o['name']}"] = size
+        return out
+
     def delete(self, keys: List[str]) -> None:
         if not keys:
             return
@@ -104,7 +123,6 @@ class SupabaseStore:
 
 _store: Optional[RemoteStore] = None
 _store_ready = False
-_pending_purges: Dict[str, int] = {}  # meeting_id → дахин оролдсон тоо
 _lock = threading.Lock()
 
 
@@ -168,8 +186,16 @@ def persist(meeting_id: str) -> bool:
     existing = _remote_audio(store, meeting_id)
     if existing and existing != key:
         store.delete([existing])  # өөр өргөтгөлтэй хуучин хувилбар
+    local_size = audio.stat().st_size
     store.put_file(key, audio, _content_type(audio))
-    logger.info("Audio persisted for meeting %s (%d bytes)", meeting_id, audio.stat().st_size)
+    sizes = getattr(store, "sizes", None)
+    if sizes is not None:
+        remote_size = sizes(meeting_id).get(key)
+        if remote_size != local_size:
+            # Дутуу хуулагдсан (сүлжээ таслагдсан, хэмжээний хязгаар): найдвартай хадгалагдсан гэж үзэхгүй
+            logger.error("Audio persist size mismatch for meeting %s: local %d, remote %s", meeting_id, local_size, remote_size)
+            raise StorageUnavailable("upload: size mismatch")
+    logger.info("Audio persisted for meeting %s (%d bytes, verified)", meeting_id, local_size)
     return True
 
 
@@ -192,38 +218,63 @@ def ensure_local(meeting_id: str) -> bool:
 
 
 def purge(meeting_id: str) -> None:
-    """Local + remote устгана. Remote амжилтгүй бол ХЭЗЭЭ Ч чимээгүй орхихгүй: лог бичиж, дараагийн удаа дахин оролдоно."""
+    """Local + remote устгана. Remote амжилтгүй бол ХЭЗЭЭ Ч чимээгүй орхихгүй: DB-д бүртгэж, дараа дахин оролдоно
+    (сервер дахин эхэлсэн ч дараалал хадгалагдана)."""
     shutil.rmtree(_dir(meeting_id), ignore_errors=True)
     store = get_store()
     if store is None:
         return
-    with _lock:
-        _pending_purges.setdefault(meeting_id, 0)
-    retry_pending_purges()
+    from app.db import AudioPurge, session_scope
+
+    with session_scope() as s:
+        if s.get(AudioPurge, meeting_id) is None:
+            s.add(AudioPurge(meeting_id=meeting_id, attempts=0))
+    retry_pending_purges([meeting_id])
 
 
-def retry_pending_purges() -> int:
-    """Хүлээгдэж буй remote устгалуудыг дахин оролдоно. Үлдсэн тоог буцаана."""
+def retry_pending_purges(only: Optional[List[str]] = None) -> int:
+    """Хүлээгдэж буй remote устгалуудыг дахин оролдоно (10 мин тутам + шинэ устгал бүрд). Үлдсэн тоог буцаана."""
     store = get_store()
     if store is None:
         return 0
+    from sqlalchemy import func, select
+
+    from app.db import AudioPurge, session_scope
+
     with _lock:
-        todo = list(_pending_purges)
-    for mid in todo:
-        try:
-            store.delete(store.list(mid))
-        except StorageUnavailable as e:
-            with _lock:
-                _pending_purges[mid] = _pending_purges.get(mid, 0) + 1
-                attempts = _pending_purges[mid]
-            logger.error("Remote audio purge for meeting %s failed (attempt %d): %s", mid, attempts, e)
-        else:
-            with _lock:
-                _pending_purges.pop(mid, None)
-    with _lock:
-        return len(_pending_purges)
+        with session_scope() as s:
+            q = select(AudioPurge.meeting_id).order_by(AudioPurge.created_at).limit(100)
+            if only is not None:
+                q = q.where(AudioPurge.meeting_id.in_(only))
+            todo = list(s.scalars(q).all())
+        for mid in todo:
+            try:
+                store.delete(store.list(mid))
+            except StorageUnavailable as e:
+                with session_scope() as s:
+                    row = s.get(AudioPurge, mid)
+                    if row is not None:
+                        row.attempts += 1
+                        row.last_error = str(e)[:200]
+                        row.updated_at = datetime.now(timezone.utc)
+                        attempts = row.attempts
+                logger.error("Remote audio purge for meeting %s failed (attempt %d): %s", mid, attempts, e)
+            else:
+                with session_scope() as s:
+                    row = s.get(AudioPurge, mid)
+                    if row is not None:
+                        s.delete(row)
+        with session_scope() as s:
+            return int(s.scalar(select(func.count()).select_from(AudioPurge)) or 0)
 
 
 def pending_purges() -> Dict[str, int]:
-    with _lock:
-        return dict(_pending_purges)
+    """meeting_id → дахин оролдсон тоо (readyz-д)."""
+    if get_store() is None:
+        return {}
+    from sqlalchemy import select
+
+    from app.db import AudioPurge, session_scope
+
+    with session_scope() as s:
+        return {r.meeting_id: r.attempts for r in s.scalars(select(AudioPurge)).all()}

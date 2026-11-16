@@ -33,7 +33,10 @@ SELF_AUTH_WS = {"/ws/meetings/{meeting_id}/audio"}
 
 
 def _has_auth(route: APIRoute) -> bool:
-    return any(d.call is current_user for d in route.dependant.dependencies)
+    """current_user шууд эсвэл дамжуулан (жишээ нь require_admin → current_user) dependency болсон эсэх."""
+    def walk(deps) -> bool:
+        return any(d.call is current_user or walk(d.dependencies) for d in deps)
+    return walk(route.dependant.dependencies)
 
 
 def test_every_http_route_requires_auth_or_is_listed_public():

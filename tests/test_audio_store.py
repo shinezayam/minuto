@@ -47,7 +47,6 @@ def remote():
     audio_store.set_store(fake)
     yield fake
     audio_store.set_store(None)
-    audio_store._pending_purges.clear()
 
 
 async def _meeting(client: AsyncClient) -> str:
@@ -215,3 +214,52 @@ def test_supabase_network_error_is_typed(tmp_path):
     s = _supabase(boom)
     with pytest.raises(StorageUnavailable):
         s.list("m")
+
+
+class SizedStore(FakeStore):
+    """Supabase шиг хэмжээ буцаадаг store; truncate=True бол дутуу хуулагдсан мэт."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.truncate = False
+
+    def put_file(self, key, path, content_type):
+        super().put_file(key, path, content_type)
+        if self.truncate:
+            self.objects[key] = self.objects[key][:-10]
+
+    def sizes(self, prefix):
+        return {k: len(v) for k, v in self.objects.items() if k.startswith(prefix.rstrip("/") + "/")}
+
+
+@pytest.fixture
+def sized():
+    fake = SizedStore()
+    audio_store.set_store(fake)
+    yield fake
+    audio_store.set_store(None)
+
+
+async def test_persist_verifies_remote_size(client: AsyncClient, sized: SizedStore):
+    mid = await _meeting(client)
+    assert (await _upload(client, mid)).status_code == 200  # бүтэн хуулагдсан: хэмжээ таарна
+    mid2 = await _meeting(client)
+    sized.truncate = True
+    r = await _upload(client, mid2)
+    assert r.status_code == 503 and r.json()["detail"].startswith("STORAGE_UNAVAILABLE")  # дутуу хуулсныг хүлээж авахгүй
+
+
+async def test_pending_purges_survive_a_restart(client: AsyncClient, remote: FakeStore):
+    """Дараалал DB-д: санах ой цэвэрлэгдсэн ч (сервер дахин эхэлсэн) дараагийн оролдлогоор устгагдана."""
+    from app.db import AudioPurge, session_scope
+
+    mid = await _meeting(client)
+    await _upload(client, mid)
+    remote.fail_delete = 5
+    assert (await client.delete(f"/api/meetings/{mid}")).status_code == 204
+    with session_scope() as s:
+        assert s.get(AudioPurge, mid).attempts == 1
+    audio_store.set_store(remote)  # "дахин эхэлсэн" store
+    remote.fail_delete = 0
+    assert audio_store.retry_pending_purges() == 0 and not remote.objects
+    assert audio_store.pending_purges() == {}

@@ -21,7 +21,7 @@ def _cols(engine, table):
 def test_fresh_database_reaches_head(tmp_path):
     e = _engine(tmp_path)
     migrate.upgrade_to_head(e)
-    assert migrate.current_revision(e) == migrate.head_revision() == "0007"
+    assert migrate.current_revision(e) == migrate.head_revision() == "0008"
     assert "token_version" in _cols(e, "users")
 
 
@@ -38,7 +38,7 @@ def test_upgrade_is_idempotent(tmp_path):
     e = _engine(tmp_path)
     migrate.upgrade_to_head(e)
     migrate.upgrade_to_head(e)
-    assert migrate.current_revision(e) == "0007"
+    assert migrate.current_revision(e) == "0008"
 
 
 def test_existing_pre_alembic_database_keeps_data_and_gets_stamped(tmp_path):
@@ -48,7 +48,7 @@ def test_existing_pre_alembic_database_keeps_data_and_gets_stamped(tmp_path):
     with e.begin() as c:
         c.execute(text("INSERT INTO users (id, email, password_hash, created_at) VALUES ('u1','a@b.mn','x','2026-01-01')"))
     migrate.upgrade_to_head(e)
-    assert migrate.current_revision(e) == "0007"
+    assert migrate.current_revision(e) == "0008"
     with e.connect() as c:
         row = c.execute(text("SELECT email, token_version FROM users WHERE id='u1'")).one()
     assert tuple(row) == ("a@b.mn", 0)  # өгөгдөл хэвээр, шинэ багана default 0
@@ -71,6 +71,10 @@ def test_downgrade_of_each_new_revision(tmp_path):
     tables = lambda: set(inspect(e).get_table_names())  # noqa: E731
     billing_tables = {"plans", "subscriptions", "usage_events", "payment_orders", "contact_requests"}
     assert {"transcript_revisions", "processing_jobs"} | billing_tables <= tables()
+
+    assert "audio_purges" in tables()
+    migrate.downgrade(e, "0007")  # 0008 → 0007: зөвхөн audio_purges устна
+    assert migrate.current_revision(e) == "0007" and "audio_purges" not in tables()
 
     assert "google_sub" in _cols(e, "users")
     migrate.downgrade(e, "0006")  # 0007 → 0006: зөвхөн users.google_sub устна
@@ -97,7 +101,7 @@ def test_downgrade_of_each_new_revision(tmp_path):
     assert "token_version" not in _cols(e, "users")
 
     migrate.upgrade_to_head(e)  # дахин дээш гарна
-    assert migrate.current_revision(e) == "0007"
+    assert migrate.current_revision(e) == "0008"
     assert "token_version" in _cols(e, "users") and {"transcript_revisions", "processing_jobs"} <= tables()
 
 
@@ -113,4 +117,4 @@ def test_app_startup_migrates_database(tmp_path):
     from app import db
 
     eng = db.configure(f"sqlite:///{tmp_path / 'app.db'}")
-    assert migrate.current_revision(eng) == "0007"
+    assert migrate.current_revision(eng) == "0008"

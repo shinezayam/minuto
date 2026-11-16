@@ -15,6 +15,7 @@ from app.models.schemas import HealthResponse, UserResponse
 from app.services import access
 from app.services.auth import current_user
 from app.security import RateLimitMiddleware, RequestLogMiddleware, SecurityHeadersMiddleware
+from app.api.admin import router as admin_router
 from app.api.ask import router as ask_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
@@ -41,6 +42,13 @@ async def _billing_maintenance() -> None:
             await asyncio.to_thread(billing.refresh_pending_orders)
         except Exception:  # noqa: BLE001
             logger.exception("billing maintenance failed")
+        try:
+            from app.services import audio_store
+
+            if audio_store.enabled():  # local backend бол DB-д хандахгүй
+                await asyncio.to_thread(audio_store.retry_pending_purges)
+        except Exception:  # noqa: BLE001
+            logger.exception("audio purge retry failed")
         await asyncio.sleep(600)
 
 
@@ -103,6 +111,7 @@ app.include_router(vocabulary_router)
 app.include_router(templates_router)
 app.include_router(workspaces_router)
 app.include_router(billing_router)
+app.include_router(admin_router)
 
 
 @app.get("/api/health", response_model=HealthResponse)

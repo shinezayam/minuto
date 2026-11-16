@@ -335,6 +335,18 @@ class ContactRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
+class AudioPurge(Base):
+    """Remote (Supabase)-аас устгаж чадаагүй хурлын аудио: дахин оролдоно (revision 0008). FK-гүй: хурал аль хэдийн устсан."""
+
+    __tablename__ = "audio_purges"
+
+    meeting_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 _engine: Optional[Engine] = None
 _SessionLocal: Optional[sessionmaker] = None
 

@@ -1445,6 +1445,24 @@
         "title": "SpeakerTurnIn",
         "type": "object"
       },
+      "StatusIn": {
+        "properties": {
+          "status": {
+            "enum": [
+              "new",
+              "contacted",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "StatusIn",
+        "type": "object"
+      },
       "TemplateCreate": {
         "properties": {
           "custom_prompt": {
@@ -1962,6 +1980,139 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/admin/contact-requests": {
+      "get": {
+        "operationId": "list_contact_requests_api_admin_contact_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new",
+                    "contacted",
+                    "closed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Contact Requests Api Admin Contact Requests Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Contact Requests",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/contact-requests/{request_id}": {
+      "patch": {
+        "operationId": "update_contact_request_api_admin_contact_requests__request_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Contact Request Api Admin Contact Requests  Request Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Contact Request",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/me": {
+      "get": {
+        "operationId": "admin_me_api_admin_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin Me Api Admin Me Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Me",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/ask": {
       "post": {
         "description": "Хэрэглэгчийн хурлуудаас (meeting_id өгвөл зөвхөн тэр хурлаас) асуулт асууна.",

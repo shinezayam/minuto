@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     # "Google-ээр нэвтрэх": Google Cloud → OAuth client (Web) ID. Нууц биш (frontend-д ч бий). Хоосон бол унтраалттай.
     # Таслалаар хэд хэдэн client ID зөвшөөрч болно.
     google_client_id: str = ""
+    # Админ хэрэглэгчдийн и-мэйл (таслалаар). Enterprise хүсэлт зэрэг дотоод хуудсыг харна.
+    admin_emails: str = ""
 
     cors_origins: str = "http://localhost:3000"
     # "production" үед /api/docs унтарч, нууц (JWT_SECRET) шаардлагатай. Render дээр RENDER env автоматаар production гэж тооцогдоно.
