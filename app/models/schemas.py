@@ -26,6 +26,9 @@ class MeetingCreate(BaseModel):
     participants: List[ParticipantName] = Field(default_factory=list, max_length=50)
     # Хурлын загвар (default эсвэл өөрийн) — тэмдэглэлийн хэсэг, зааварыг тодорхойлно
     template_id: Optional[str] = Field(default=None, max_length=36)
+    # Workspace-д хурал үүсгэх (орхивол хувийн хурал). project_id нь заавал энэ workspace-ийнх байна.
+    workspace_id: Optional[str] = Field(default=None, max_length=36)
+    project_id: Optional[str] = Field(default=None, max_length=36)
 
 
 ActionItemStatus = Literal["open", "in_progress", "done", "cancelled"]
@@ -109,6 +112,10 @@ class MeetingResponse(BaseModel):
     processing_error: Optional[str] = None
     participants: List[str] = Field(default_factory=list)
     template_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    project_id: Optional[str] = None
+    # Хандаж буй хэрэглэгчийн энэ хурал дээрх үүрэг: owner | admin | editor | viewer (frontend товчлуур нуухад)
+    my_role: Optional[str] = None
 
 
 class MeetingListResponse(BaseModel):

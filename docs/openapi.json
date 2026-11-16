@@ -507,6 +507,18 @@
             "title": "Participants",
             "type": "array"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "template_id": {
             "anyOf": [
               {
@@ -524,6 +536,18 @@
             "maxLength": 200,
             "title": "Title",
             "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
           }
         },
         "title": "MeetingCreate",
@@ -665,6 +689,17 @@
             "title": "Language",
             "type": "string"
           },
+          "my_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "My Role"
+          },
           "participants": {
             "items": {
               "type": "string"
@@ -704,6 +739,17 @@
             "title": "Processing Total",
             "type": "integer"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "started_at": {
             "anyOf": [
               {
@@ -738,6 +784,17 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
           }
         },
         "required": [
@@ -839,8 +896,7 @@
           "user_id",
           "email",
           "name",
-          "role",
-          "joined_at"
+          "role"
         ],
         "title": "MemberResponse",
         "type": "object"
@@ -990,6 +1046,20 @@
           "question"
         ],
         "title": "QAPair",
+        "type": "object"
+      },
+      "RoleChange": {
+        "properties": {
+          "role": {
+            "pattern": "^(admin|editor|viewer)$",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "RoleChange",
         "type": "object"
       },
       "SpeakerTurnIn": {
@@ -1291,6 +1361,19 @@
           "segments"
         ],
         "title": "TranscriptUpdate",
+        "type": "object"
+      },
+      "TransferRequest": {
+        "properties": {
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "TransferRequest",
         "type": "object"
       },
       "UserResponse": {
@@ -1817,6 +1900,23 @@
               "default": false,
               "title": "Include Archived",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
             }
           }
         ],
@@ -3364,6 +3464,40 @@
       }
     },
     "/api/workspaces/{workspace_id}": {
+      "delete": {
+        "description": "Workspace устгах (зөвхөн owner, байгууллага). Хурлууд устахгүй.",
+        "operationId": "delete_workspace_api_workspaces__workspace_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "get": {
         "description": "Workspace-г авах.",
         "operationId": "get_workspace_api_workspaces__workspace_id__get",
@@ -3408,7 +3542,7 @@
     },
     "/api/workspaces/{workspace_id}/invite": {
       "post": {
-        "description": "Гишүүн урих.",
+        "description": "Гишүүн урих. owner → admin/editor/viewer, admin → editor/viewer.",
         "operationId": "invite_member_api_workspaces__workspace_id__invite_post",
         "parameters": [
           {
@@ -3508,7 +3642,7 @@
     },
     "/api/workspaces/{workspace_id}/members/{user_id}": {
       "delete": {
-        "description": "Гишүүн хасах.",
+        "description": "Гишүүн хасах / өөрөө гарах. Эзэмшигчийг хасах боломжгүй; admin admin-ийг хасахгүй.",
         "operationId": "remove_member_api_workspaces__workspace_id__members__user_id__delete",
         "parameters": [
           {
@@ -3546,6 +3680,66 @@
           }
         },
         "summary": "Remove Member",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "patch": {
+        "description": "Үүрэг солих (owner: бүгдийг; admin: зөвхөн editor/viewer).",
+        "operationId": "change_member_role_api_workspaces__workspace_id__members__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Member Role",
         "tags": [
           "workspaces"
         ]
@@ -3689,6 +3883,52 @@
           }
         },
         "summary": "Delete Project",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/transfer": {
+      "post": {
+        "description": "Эзэмшлийг шилжүүлэх (зөвхөн одоогийн owner). Хуучин эзэн admin болно.",
+        "operationId": "transfer_ownership_api_workspaces__workspace_id__transfer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transfer Ownership",
         "tags": [
           "workspaces"
         ]

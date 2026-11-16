@@ -58,8 +58,9 @@ def _prepared_by(user: UserResponse) -> str:
     return f"Minuto / {(user.name or '').strip() or user.email}"
 
 
-def _owned(meeting_id: str, user: UserResponse) -> MeetingResponse:
-    meeting = meeting_store.get_meeting(meeting_id, user.id)
+def _owned(meeting_id: str, user: UserResponse, action: str = "view") -> MeetingResponse:
+    """Хурлыг эрхийн дагуу авна: хандах эрхгүй бол 404, харж болох ч action хийх эрхгүй бол 403 (AccessDenied)."""
+    meeting = meeting_store.get_meeting(meeting_id, user.id, action)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
@@ -71,12 +72,21 @@ def create_meeting(body: MeetingCreate, user: UserResponse = Depends(current_use
         tmpl = templates.get_template(body.template_id)
         if not tmpl or not (tmpl["is_default"] or tmpl["owner_id"] == user.id):
             raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND: Загвар олдсонгүй")
-    return meeting_store.create_meeting(user.id, body)
+    try:
+        return meeting_store.create_meeting(user.id, body)
+    except meeting_store.WorkspaceAccessError:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    except meeting_store.InvalidProject:
+        raise HTTPException(status_code=422, detail="INVALID_PROJECT: project_id нь заасан workspace-д харьяалагдахгүй байна")
 
 
 @router.get("", response_model=MeetingListResponse)
-def list_meetings(include_archived: bool = Query(False), user: UserResponse = Depends(current_user)) -> MeetingListResponse:
-    return MeetingListResponse(meetings=meeting_store.list_meetings(user.id, include_archived=include_archived))
+def list_meetings(
+    include_archived: bool = Query(False),
+    workspace_id: Optional[str] = Query(default=None, max_length=36),
+    user: UserResponse = Depends(current_user),
+) -> MeetingListResponse:
+    return MeetingListResponse(meetings=meeting_store.list_meetings(user.id, include_archived=include_archived, workspace_id=workspace_id))
 
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
@@ -103,7 +113,7 @@ def start_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -
 @router.post("/{meeting_id}/pause", response_model=MeetingResponse)
 def pause_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
     live = live_transcriber.get(meeting_id)
-    if live is not None and meeting_store.get_meeting(meeting_id, user.id):
+    if live is not None and meeting_store.get_meeting(meeting_id, user.id, "edit"):
         live.request_flush()  # зогсоохоос өмнө хэлсэн үгийг шууд харуулна
     meeting = meeting_store.pause_meeting(meeting_id, user.id)
     if not meeting:
@@ -170,7 +180,7 @@ async def upload_audio(
     file: UploadFile = File(...),
     user: UserResponse = Depends(current_user),
 ) -> dict:
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
 
     try:
         guard.check_declared_size(request.headers.get("content-length"))
@@ -259,7 +269,7 @@ async def upload_audio(
 @router.post("/{meeting_id}/regenerate-summary", status_code=202)
 async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     """Зөвхөн summary-г дахин үүсгэнэ (бүх meeting minutes биш)."""
-    meeting = _owned(meeting_id, user)
+    meeting = _owned(meeting_id, user, "edit")
     transcript_data = meeting_store.get_meeting_transcript(meeting_id)
     if not transcript_data:
         raise HTTPException(status_code=400, detail="NO_TRANSCRIPT: Бичвэр олдсонгүй")
@@ -312,7 +322,7 @@ def update_action_items(
     if_match: Optional[str] = Header(default=None),
 ) -> dict:
     """Даалгавруудыг шинэчилнэ. Бүтэц, статус, огноог шалгана; If-Match өгвөл зөрчилдөөнийг (412) илрүүлнэ."""
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
     current_minutes = meeting_store.get_meeting_minutes(meeting_id)
     if not current_minutes:
         raise HTTPException(status_code=404, detail="NO_MINUTES: Хурлын бичиг үүсээгүй байна")
@@ -341,7 +351,7 @@ def update_action_items(
 @router.post("/{meeting_id}/topics")
 async def generate_topics(meeting_id: str, user: UserResponse = Depends(current_user)):
     """Бичвэрийг сэдвүүдэд хуваана"""
-    meeting = meeting_store.get_meeting(meeting_id, user.id)
+    meeting = _owned(meeting_id, user, "edit")
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     
@@ -376,7 +386,7 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
     Боловсруулалтыг ард нь эхлүүлээд шууд хариу өгнө.
     Явцыг GET /api/meetings/{id} (processing_stage, processing_done/total, processing_error)-ээр харна.
     """
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
     try:
         await asyncio.to_thread(audio_store.ensure_local, meeting_id)
     except audio_store.StorageUnavailable:
@@ -416,7 +426,7 @@ def update_transcript(
     Бичвэрийн сегментүүдийг засварлах. Олон хүнтэй сегментэд turn_index (эсвэл бүтэн turns) заавал.
     If-Match: GET-ээс авсан etag — хойшоо өөрчлөгдсөн бол 412. Боловсруулж байвал 409. Өмнөх хувилбар түүхэнд хадгалагдана.
     """
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
     edits = [s.model_dump(exclude_none=True) for s in body.segments]
     try:
         result = meeting_store.edit_transcript(meeting_id, user.id, edits, if_match)
@@ -440,7 +450,7 @@ def list_transcript_revisions(meeting_id: str, user: UserResponse = Depends(curr
 @router.post("/{meeting_id}/transcript/revisions/{revision_id}/restore")
 def restore_transcript_revision(meeting_id: str, revision_id: str, user: UserResponse = Depends(current_user)) -> dict:
     """Түүхээс бичвэрийг сэргээнэ. Одоогийн бичвэр мөн түүхэнд хадгалагдана (сэргээлтийг буцаах боломжтой)."""
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
     try:
         result = meeting_store.restore_revision(meeting_id, user.id, revision_id)
     except meeting_store.TranscriptBusyError:
@@ -453,7 +463,7 @@ def restore_transcript_revision(meeting_id: str, revision_id: str, user: UserRes
 @router.post("/{meeting_id}/transcript/replace")
 def replace_in_transcript(meeting_id: str, body: TranscriptReplace, user: UserResponse = Depends(current_user)) -> dict:
     """Буруу танигдсан үгийг бичвэр (include_minutes үед тэмдэглэл)-ийн бүх газарт солино."""
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
     try:
         result = meeting_store.replace_in_meeting(
             meeting_id,
@@ -491,7 +501,7 @@ def get_minutes(meeting_id: str, user: UserResponse = Depends(current_user)) -> 
 @router.post("/{meeting_id}/ws-ticket")
 def create_ws_ticket(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
     """WebSocket холболтод зориулсан ≤60 сек, нэг удаагийн, зөвхөн энэ хуралд хүчинтэй тасалбар."""
-    _owned(meeting_id, user)
+    _owned(meeting_id, user, "edit")
     ttl = settings.ws_ticket_ttl_sec
     return {"ticket": auth_service.create_ticket(user.id, meeting_id, "ws", ttl), "expires_in": ttl}
 

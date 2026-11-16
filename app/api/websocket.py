@@ -9,6 +9,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import settings
 from app.security import ws_origin_allowed
+from app.services import access
 from app.models.schemas import WSAck, WSError, WSRecordingReady
 from app.services.audio_ingest import audio_ingest
 from app.services import live_transcriber, meeting_store, processing
@@ -57,7 +58,12 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
         await websocket.close(code=4401)
         return
 
-    meeting = meeting_store.get_meeting(meeting_id, user.id)
+    try:
+        meeting = meeting_store.get_meeting(meeting_id, user.id, "edit")  # шууд бичлэг = засах эрх (viewer бичлэг оруулж болохгүй)
+    except access.AccessDenied:
+        await _send_error(websocket, "FORBIDDEN", "Танд энэ хурал дээр бичлэг хийх эрх байхгүй")
+        await websocket.close(code=4403)
+        return
     if not meeting:
         await _send_error(websocket, "MEETING_NOT_FOUND", "Meeting not found")
         await websocket.close(code=4404)

@@ -5,9 +5,10 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 
-from app.db import Contact, Meeting, MeetingTemplate, ProcessingJob, TranscriptRevision, User, session_scope
+from app.services import access
+from app.db import Contact, Meeting, MeetingTemplate, ProcessingJob, Project, TranscriptRevision, User, session_scope
 from app.models.schemas import ContactResponse, MeetingCreate, MeetingResponse, MeetingStatus, MeetingUpdate
 
 
@@ -19,7 +20,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _to_response(m: Meeting) -> MeetingResponse:
+def _to_response(m: Meeting, role: Optional[str] = None) -> MeetingResponse:
     return MeetingResponse(
         id=m.id,
         title=m.title,
@@ -36,13 +37,22 @@ def _to_response(m: Meeting) -> MeetingResponse:
         processing_error=m.processing_error,
         participants=list(m.participants or []),
         template_id=m.template_id,
+        workspace_id=m.workspace_id,
+        project_id=m.project_id,
+        my_role=role,
     )
 
 
-def _get(session, meeting_id: str, owner_id: Optional[str]) -> Optional[Meeting]:
+def _get(session, meeting_id: str, user_id: Optional[str], action: str = "view") -> Optional[Meeting]:
+    """Хурлыг эрхийн дагуу авна. user_id=None бол шалгахгүй (дотоод дуудлага). Эрхгүй бол None (404), харж болох ч үйлдэл хийх эрхгүй бол AccessDenied (403)."""
     m = session.get(Meeting, meeting_id)
-    if m is None or (owner_id is not None and m.owner_id != owner_id):
+    if m is None or user_id is None:
+        return m
+    verdict = access.decide(session, user_id, m, action)
+    if verdict == "none":
         return None  # бусдын хурлыг "олдсонгүй" гэж хариулна
+    if verdict == "forbidden":
+        raise access.AccessDenied(action)
     return m
 
 
@@ -75,10 +85,32 @@ def _remember_contacts(session, owner_id: str, names: List[str]) -> None:
 
 # ---------- CRUD ----------
 
+class WorkspaceAccessError(Exception):
+    """Workspace олдсонгүй / гишүүн биш (404)."""
+
+
+class InvalidProject(Exception):
+    """project_id энэ workspace-д харьяалагдахгүй (422)."""
+
+
 def create_meeting(owner_id: str, data: MeetingCreate) -> MeetingResponse:
     participants = _dedupe(data.participants)
     with session_scope() as s:
+        if data.project_id and not data.workspace_id:
+            raise InvalidProject("project_id нь workspace_id-тэй хамт өгөгдөнө")
+        if data.workspace_id:
+            role = access.workspace_role(s, owner_id, data.workspace_id)
+            if role is None:
+                raise WorkspaceAccessError(data.workspace_id)  # гишүүн биш: workspace-ийг оршин байгааг ч мэдэгдэхгүй
+            if role not in ("owner", "admin", "editor"):
+                raise access.AccessDenied("create")
+            if data.project_id:
+                proj = s.get(Project, data.project_id)
+                if proj is None or proj.workspace_id != data.workspace_id:
+                    raise InvalidProject(data.project_id)
         m = Meeting(
+            workspace_id=data.workspace_id,
+            project_id=data.project_id,
             owner_id=owner_id,
             title=data.title,
             language=data.language,
@@ -92,10 +124,11 @@ def create_meeting(owner_id: str, data: MeetingCreate) -> MeetingResponse:
         return _to_response(m)
 
 
-def get_meeting(meeting_id: str, owner_id: Optional[str] = None) -> Optional[MeetingResponse]:
+def get_meeting(meeting_id: str, owner_id: Optional[str] = None, action: str = "view") -> Optional[MeetingResponse]:
+    """owner_id = хандаж буй хэрэглэгчийн id (workspace гишүүнийг ч агуулна). action: view | edit | delete."""
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
-        return _to_response(m) if m else None
+        m = _get(s, meeting_id, owner_id, action)
+        return _to_response(m, access.role_for(s, owner_id, m) if m and owner_id else None) if m else None
 
 
 def meeting_ids(owner_id: str) -> list[str]:
@@ -104,18 +137,29 @@ def meeting_ids(owner_id: str) -> list[str]:
         return list(s.scalars(select(Meeting.id).where(Meeting.owner_id == owner_id)))
 
 
-def list_meetings(owner_id: str, include_archived: bool = False) -> list[MeetingResponse]:
+def list_meetings(owner_id: str, include_archived: bool = False, workspace_id: Optional[str] = None) -> list[MeetingResponse]:
+    """Хувийн хурлууд + гишүүн байгаа workspace-үүдийн хурлууд. workspace_id өгвөл зөвхөн тэр workspace (гишүүн биш бол хоосон)."""
     with session_scope() as s:
-        query = select(Meeting).where(Meeting.owner_id == owner_id)
+        member_ws = access.accessible_workspace_ids(s, owner_id)
+        if workspace_id is not None:
+            query = select(Meeting).where(Meeting.workspace_id == workspace_id) if workspace_id in member_ws else select(Meeting).where(False)
+        else:
+            query = select(Meeting).where(
+                or_(
+                    and_(Meeting.workspace_id.is_(None), Meeting.owner_id == owner_id),
+                    Meeting.workspace_id.in_(member_ws) if member_ws else False,
+                )
+            )
         if not include_archived:
             query = query.where(Meeting.archived == 0)
         rows = s.scalars(query.order_by(Meeting.created_at.desc())).all()
-        return [_to_response(m) for m in rows]
+        roles = {ws: access.workspace_role(s, owner_id, ws) for ws in member_ws}
+        return [_to_response(m, "owner" if m.workspace_id is None else roles.get(m.workspace_id)) for m in rows]
 
 
 def archive_meeting(meeting_id: str, owner_id: str, archive: bool = True) -> Optional[MeetingResponse]:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "delete")
         if not m:
             return None
         m.archived = 1 if archive else 0
@@ -125,7 +169,7 @@ def archive_meeting(meeting_id: str, owner_id: str, archive: bool = True) -> Opt
 
 def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optional[MeetingResponse]:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "edit")
         if not m:
             return None
         if data.title is not None:
@@ -139,7 +183,7 @@ def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optio
 
 def delete_meeting(meeting_id: str, owner_id: str) -> bool:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "delete")
         if not m:
             return False
         s.delete(m)
@@ -150,7 +194,7 @@ def delete_meeting(meeting_id: str, owner_id: str) -> bool:
 
 def start_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "edit")
         if not m:
             return None
         m.status = MeetingStatus.RECORDING.value
@@ -162,7 +206,7 @@ def start_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
 
 def pause_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "edit")
         if not m or m.status != MeetingStatus.RECORDING.value:
             return None
         if m.last_resume_ms:
@@ -176,7 +220,7 @@ def pause_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
 
 def resume_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "edit")
         if not m or m.status != MeetingStatus.PAUSED.value:
             return None
         m.status = MeetingStatus.RECORDING.value
@@ -187,7 +231,7 @@ def resume_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
 
 def end_meeting(meeting_id: str, owner_id: str) -> Optional[MeetingResponse]:
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id)
+        m = _get(s, meeting_id, owner_id, "edit")
         if not m:
             return None
         if m.last_resume_ms:
@@ -306,8 +350,13 @@ def edit_transcript(meeting_id: str, owner_id: str, edits: list[dict], if_match:
 
     with session_scope() as s:
         m = s.get(Meeting, meeting_id, with_for_update=True)
-        if not m or m.owner_id != owner_id:
+        if not m:
             raise LookupError(meeting_id)
+        verdict = access.decide(s, owner_id, m, "edit")
+        if verdict == "none":
+            raise LookupError(meeting_id)
+        if verdict == "forbidden":
+            raise access.AccessDenied("edit")
         if m.status == MeetingStatus.PROCESSING.value:
             raise TranscriptBusyError()
         current = list(m.transcript or [])
@@ -340,8 +389,13 @@ def restore_revision(meeting_id: str, owner_id: str, revision_id: str) -> dict:
 
     with session_scope() as s:
         m = s.get(Meeting, meeting_id, with_for_update=True)
-        if not m or m.owner_id != owner_id:
+        if not m:
             raise LookupError(meeting_id)
+        verdict = access.decide(s, owner_id, m, "edit")
+        if verdict == "none":
+            raise LookupError(meeting_id)
+        if verdict == "forbidden":
+            raise access.AccessDenied("edit")
         if m.status == MeetingStatus.PROCESSING.value:
             raise TranscriptBusyError()
         rev = s.get(TranscriptRevision, revision_id)
@@ -422,7 +476,14 @@ def list_meeting_contents(
     """Ask Minuto-д: бичвэртэй хурлуудын бичвэр, тэмдэглэл (шинэ нь эхэндээ)."""
     from datetime import datetime
     with session_scope() as s:
-        q = select(Meeting).where(Meeting.owner_id == owner_id, Meeting.transcript.is_not(None))
+        member_ws = access.accessible_workspace_ids(s, owner_id)
+        q = select(Meeting).where(
+            or_(
+                and_(Meeting.workspace_id.is_(None), Meeting.owner_id == owner_id),
+                Meeting.workspace_id.in_(member_ws) if member_ws else False,
+            ),
+            Meeting.transcript.is_not(None),
+        )
         if meeting_id is not None:
             q = q.where(Meeting.id == meeting_id)
         if meeting_ids:

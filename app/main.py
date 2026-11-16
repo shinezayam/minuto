@@ -11,6 +11,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from app import db
 from app.config import settings
 from app.models.schemas import HealthResponse, UserResponse
+from app.services import access
 from app.services.auth import current_user
 from app.security import RateLimitMiddleware, RequestLogMiddleware, SecurityHeadersMiddleware
 from app.api.ask import router as ask_router
@@ -94,6 +95,11 @@ async def health() -> HealthResponse:
         database=db.dialect(),
         live_transcription=live_transcriber.enabled(),
     )
+
+
+@app.exception_handler(access.AccessDenied)
+async def access_denied(request: Request, exc: access.AccessDenied) -> JSONResponse:
+    return JSONResponse({"detail": "FORBIDDEN: Танд энэ үйлдлийг хийх эрх байхгүй"}, status_code=403)
 
 
 @app.get("/healthz")

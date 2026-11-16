@@ -31,7 +31,7 @@ class MemberResponse(BaseModel):
     email: str
     name: Optional[str]
     role: str
-    joined_at: Optional[str]
+    joined_at: Optional[str] = None
 
 
 class InviteRequest(BaseModel):
@@ -83,20 +83,50 @@ def list_members(workspace_id: str, user: UserResponse = Depends(current_user)) 
     return members
 
 
+def _wrap(fn, *args):
+    try:
+        return fn(*args)
+    except workspaces.WorkspaceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from e
+
+
 @router.post("/{workspace_id}/invite", response_model=MemberResponse)
 def invite_member(workspace_id: str, body: InviteRequest, user: UserResponse = Depends(current_user)) -> MemberResponse:
-    """Гишүүн урих."""
-    result = workspaces.invite_member(workspace_id, user.id, body.email, body.role)
-    if not result:
-        raise HTTPException(status_code=400, detail="Cannot invite user")
-    return result
+    """Гишүүн урих. owner → admin/editor/viewer, admin → editor/viewer."""
+    return _wrap(workspaces.invite_member, workspace_id, user.id, body.email, body.role)
+
+
+class RoleChange(BaseModel):
+    role: str = Field(pattern="^(admin|editor|viewer)$")
+
+
+@router.patch("/{workspace_id}/members/{user_id}", response_model=MemberResponse)
+def change_member_role(workspace_id: str, user_id: str, body: RoleChange, user: UserResponse = Depends(current_user)) -> MemberResponse:
+    """Үүрэг солих (owner: бүгдийг; admin: зөвхөн editor/viewer)."""
+    result = _wrap(workspaces.change_role, workspace_id, user.id, user_id, body.role)
+    return {**result, "joined_at": None}
 
 
 @router.delete("/{workspace_id}/members/{user_id}", status_code=204, response_model=None)
 def remove_member(workspace_id: str, user_id: str, user: UserResponse = Depends(current_user)) -> None:
-    """Гишүүн хасах."""
-    if not workspaces.remove_member(workspace_id, user.id, user_id):
-        raise HTTPException(status_code=400, detail="Cannot remove member")
+    """Гишүүн хасах / өөрөө гарах. Эзэмшигчийг хасах боломжгүй; admin admin-ийг хасахгүй."""
+    _wrap(workspaces.remove_member, workspace_id, user.id, user_id)
+
+
+class TransferRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/{workspace_id}/transfer", status_code=204, response_model=None)
+def transfer_ownership(workspace_id: str, body: TransferRequest, user: UserResponse = Depends(current_user)) -> None:
+    """Эзэмшлийг шилжүүлэх (зөвхөн одоогийн owner). Хуучин эзэн admin болно."""
+    _wrap(workspaces.transfer_ownership, workspace_id, user.id, body.user_id)
+
+
+@router.delete("/{workspace_id}", status_code=204, response_model=None)
+def delete_workspace(workspace_id: str, user: UserResponse = Depends(current_user)) -> None:
+    """Workspace устгах (зөвхөн owner, байгууллага). Хурлууд устахгүй."""
+    _wrap(workspaces.delete_workspace, workspace_id, user.id)
 
 
 # Projects
@@ -114,14 +144,18 @@ def list_projects(workspace_id: str, user: UserResponse = Depends(current_user))
 @router.post("/{workspace_id}/projects", response_model=ProjectResponse, status_code=201)
 def create_project(workspace_id: str, body: ProjectCreate, user: UserResponse = Depends(current_user)) -> ProjectResponse:
     """Project үүсгэх."""
+    if not workspaces.get_workspace(workspace_id, user.id):
+        raise HTTPException(status_code=404, detail="Workspace not found")  # гишүүн биш: оршин байгааг мэдэгдэхгүй
     result = workspaces.create_project(workspace_id, user.id, body.name, body.description, body.color)
     if not result:
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="FORBIDDEN: Танд project удирдах эрх байхгүй")
     return result
 
 
 @router.delete("/{workspace_id}/projects/{project_id}", status_code=204, response_model=None)
 def delete_project(workspace_id: str, project_id: str, user: UserResponse = Depends(current_user)) -> None:
     """Project устгах."""
-    if not workspaces.delete_project(project_id, user.id):
-        raise HTTPException(status_code=403, detail="Permission denied")
+    if not workspaces.get_workspace(workspace_id, user.id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if not workspaces.delete_project(project_id, user.id, workspace_id):
+        raise HTTPException(status_code=403, detail="FORBIDDEN: Танд project удирдах эрх байхгүй")
