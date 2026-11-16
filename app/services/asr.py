@@ -31,6 +31,10 @@ class ASRContext:
 
     hints: List[str] = field(default_factory=list)
     topic: Optional[str] = None
+    # Үргэлжлүүлэх: өмнө дууссан хэсгүүд {index: {"text","start_ms","end_ms"}} — дахин хийхгүй
+    resume: dict = field(default_factory=dict)
+    # Хэсэг бүр дуусах бүрд дуудагдана (durable job DB-д хадгална)
+    on_chunk: Optional[Callable[[int, dict], None]] = None
 
 
 NO_CONTEXT = ASRContext()
@@ -129,18 +133,20 @@ class QwenOmniASRProvider:
 
             async def one(i: int, part: Path) -> TranscriptSegment:
                 nonlocal done
-                async with sem:
-                    text = await self._transcribe_bytes(client, part.read_bytes(), prompt)
+                start = i * chunk_ms
+                saved = context.resume.get(i)
+                if saved is not None:  # өмнөх оролдлогод дууссан: API дуудахгүй
+                    text, end = saved["text"], saved["end_ms"]
+                else:
+                    async with sem:
+                        text = await self._transcribe_bytes(client, part.read_bytes(), prompt)
+                    end = start + wav_duration_ms(part)
+                    if context.on_chunk:
+                        context.on_chunk(i, {"text": text, "start_ms": start, "end_ms": end})
                 done += 1
                 if on_progress:
                     on_progress(done, len(parts))
-                start = i * chunk_ms
-                return TranscriptSegment(
-                    id=f"seg_{i + 1}",
-                    start_ms=start,
-                    end_ms=start + wav_duration_ms(part),
-                    text=text,
-                )
+                return TranscriptSegment(id=f"seg_{i + 1}", start_ms=start, end_ms=end, text=text)
 
             segments = await asyncio.gather(*(one(i, p) for i, p in enumerate(parts)))
 

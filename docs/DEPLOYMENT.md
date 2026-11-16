@@ -33,6 +33,8 @@ Backend: Render (FastAPI). Frontend: Vercel (Next.js). Data: Postgres (Render) a
 | `MIN_FREE_DISK_BYTES` | – | 500 MB | New audio refused below this. |
 | `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_AUTH_PER_MIN` / `RATE_LIMIT_EXPENSIVE_PER_MIN` | – | 120 / 10 / 20 | Per IP, login+register per IP, AI/processing per user. |
 | `WS_TICKET_TTL_SEC` / `AUDIO_URL_TTL_SEC` | – | 60 / 900 | |
+| `JOB_WORKERS` / `JOB_MAX_ATTEMPTS` | – | 2 / 3 | Parallel processing jobs; attempts include the first run (provider errors only are retried). |
+| `JOB_LEASE_SEC` / `JOB_HEARTBEAT_SEC` / `JOB_TIMEOUT_SEC` / `JOB_BACKOFF_SEC` | – | 120 / 30 / 3600 / 5 | A job whose heartbeat stops for `JOB_LEASE_SEC` is re-queued; backoff doubles per attempt (max 120 s). |
 
 Frontend (Vercel): `NEXT_PUBLIC_API_BASE_URL` = the backend URL (build-time).
 

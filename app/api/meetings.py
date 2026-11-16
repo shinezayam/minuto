@@ -28,7 +28,7 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
-from app.services import audio_store, transcript_edit
+from app.services import audio_store, jobs, transcript_edit
 from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
@@ -391,7 +391,10 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
     if not meeting_store.try_begin_processing(meeting_id):
         raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Энэ хурлыг боловсруулж байна")
     await live_transcriber.stop(meeting_id)
-    processing.start(meeting_id)
+    try:
+        processing.start(meeting_id)
+    except jobs.AlreadyActive:
+        raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Энэ хурлыг боловсруулж байна")
     return {"meeting_id": meeting_id, "status": "processing"}
 
 

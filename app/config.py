@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     rate_limit_auth_per_min: int = 10
     rate_limit_expensive_per_min: int = 20
     max_audio_chunk_bytes: int = 5_000_000
+    # Боловсруулалтын ажлын дараалал (durable jobs)
+    job_workers: int = 2  # зэрэг боловсруулах хурлын тоо
+    job_max_attempts: int = 3  # provider-ийн түр алдаанд дахин оролдох дээд тоо (анхных нь орно)
+    job_lease_sec: int = 120  # worker энэ хугацаанд heartbeat өгөхгүй бол ажил "унасан" гэж үзэж дахин дараалалд оруулна
+    job_heartbeat_sec: int = 30
+    job_timeout_sec: int = 3600  # нэг ажлын нийт дээд хугацаа
+    job_poll_sec: float = 2.0
+    job_backoff_sec: float = 5.0  # retry-ийн анхны хүлээлт; оролдлого бүрт 2 дахин нэмэгдэнэ (дээд нь 120 сек)
     # Аудио хамгаалалт (env-ээр өөрчилнө). 0 = хязгааргүй (зөвхөн тест/дотоод хэрэглээнд)
     max_upload_bytes: int = 300_000_000  # нэг файл upload
     max_recording_sec: int = 4 * 3600  # нэг бичлэгийн урт (upload болон шууд бичлэг)

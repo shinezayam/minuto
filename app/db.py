@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -139,6 +139,35 @@ class TranscriptRevision(Base):
     changed: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     transcript: Mapped[list] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class ProcessingJob(Base):
+    """Боловсруулалтын ажил (аудио → бичвэр → хурлын бичиг). Сервер унасан ч DB-д үлдэж, дахин эхлэхэд үргэлжилнэ."""
+
+    __tablename__ = "processing_jobs"
+    __table_args__ = (
+        # Нэг хуралд зэрэг ганц идэвхтэй ажил: давхар POST /process нэг ажил үүсгэнэ
+        Index(
+            "uq_processing_jobs_active_meeting", "meeting_id", unique=True,
+            sqlite_where=text("state IN ('queued','running')"), postgresql_where=text("state IN ('queued','running')"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    meeting_id: Mapped[str] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    # queued | running | succeeded | failed
+    state: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)  # retry backoff
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Дууссан ASR хэсгүүд {"<index>": {"text","start_ms","end_ms"}} — үргэлжлүүлэхэд дахин хийхгүй
+    chunks: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class Workspace(Base):

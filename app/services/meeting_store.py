@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from sqlalchemy import delete, select, update
 
-from app.db import Contact, Meeting, MeetingTemplate, TranscriptRevision, User, session_scope
+from app.db import Contact, Meeting, MeetingTemplate, ProcessingJob, TranscriptRevision, User, session_scope
 from app.models.schemas import ContactResponse, MeetingCreate, MeetingResponse, MeetingStatus, MeetingUpdate
 
 
@@ -207,7 +207,11 @@ def try_begin_processing(meeting_id: str) -> bool:
     with session_scope() as s:
         result = s.execute(
             update(Meeting)
-            .where(Meeting.id == meeting_id, Meeting.status != MeetingStatus.PROCESSING.value)
+            .where(
+                Meeting.id == meeting_id,
+                # Идэвхтэй бичлэг дундуур эсвэл аль хэдийн боловсруулж байхад эхлүүлэхгүй
+                Meeting.status.notin_((MeetingStatus.PROCESSING.value, MeetingStatus.RECORDING.value, MeetingStatus.PAUSED.value)),
+            )
             .values(
                 status=MeetingStatus.PROCESSING.value,
                 processing_stage="queued",
@@ -249,7 +253,12 @@ def fail_interrupted_processing() -> int:
     with session_scope() as s:
         result = s.execute(
             update(Meeting)
-            .where(Meeting.status == MeetingStatus.PROCESSING.value)
+            .where(
+                Meeting.status == MeetingStatus.PROCESSING.value,
+                ~select(ProcessingJob.id).where(
+                    ProcessingJob.meeting_id == Meeting.id, ProcessingJob.state.in_(("queued", "running"))
+                ).exists(),
+            )
             .values(
                 status=MeetingStatus.FAILED.value,
                 processing_stage="failed",

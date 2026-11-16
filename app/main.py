@@ -38,10 +38,12 @@ async def lifespan(app: FastAPI):
     db.configure()
     if settings.is_production and db.dialect() == "sqlite":
         logger.error("PRODUCTION is using SQLite: data is lost on every deploy. Set DATABASE_URL to a Postgres instance.")
-    interrupted = meeting_store.fail_interrupted_processing()
-    if interrupted:
-        logger.warning("%d meeting(s) were interrupted by a restart and marked as failed", interrupted)
+    from app.services import jobs
+
+    jobs.recover_on_startup()  # унасан ажлыг үргэлжлүүлнэ; ажилгүй "processing" хурлыг алдаатай болгоно
+    jobs.ensure_workers()
     yield
+    await jobs.shutdown()  # ажиллаж буй ажил "running" хэвээр үлдэж, дараагийн эхлэлд үргэлжилнэ
     await live_transcriber.stop_all()
 
 
