@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Нэвтрэлт: JWT гарын үсгийн нууц. Хоосон бол сервер эхлэх бүрт шинээр үүснэ (бүгд дахин нэвтэрнэ).
     jwt_secret: str = ""
     jwt_ttl_days: int = 30
+    # ?token=... query-ээр нэвтрэх хуучин арга (зөвхөн audio/export). Frontend шинэчлэгдсэний дараа false болгоно.
+    allow_query_token: bool = True
+    ws_ticket_ttl_sec: int = 60  # WebSocket-ийн нэг удаагийн тасалбар
+    audio_url_ttl_sec: int = 900  # <audio>-д зориулсан гарын үсэгтэй линк (range хүсэлтүүд үргэлжилнэ)
     allow_registration: bool = True
 
     cors_origins: str = "http://localhost:3000"

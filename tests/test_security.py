@@ -13,6 +13,7 @@ from app.services.auth import current_user
 
 # Нэвтрэлтгүй байж болох route-ууд (бусад нь заавал current_user шаардана)
 PUBLIC = {
+    ("GET", "/api/meetings/{meeting_id}/audio"),  # өөрөө шалгадаг: header эсвэл гарын үсэгтэй ?sig=
     ("GET", "/api/health"),
     ("POST", "/api/auth/register"),
     ("POST", "/api/auth/login"),

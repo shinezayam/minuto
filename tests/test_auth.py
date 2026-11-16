@@ -73,11 +73,23 @@ async def test_users_cannot_see_each_others_meetings(anon_client):
     assert (await anon_client.get(f"/api/meetings/{mid}", headers=ha)).status_code == 200
 
 
-async def test_token_in_query_for_downloads(client):
+async def test_query_token_rejected_on_normal_routes(client):
     mid = (await client.post("/api/meetings", json={"title": "q"})).json()["id"]
     token = client.headers.pop("Authorization").split(" ", 1)[1]
     assert (await client.get(f"/api/meetings/{mid}")).status_code == 401
-    assert (await client.get(f"/api/meetings/{mid}?token={token}")).status_code == 200
+    # Энгийн endpoint-д ?token= хүчингүй (URL-д токен гоожих эрсдэл)
+    assert (await client.get(f"/api/meetings/{mid}?token={token}")).status_code == 401
+
+
+async def test_legacy_query_token_only_on_download_routes_and_can_be_disabled(client, monkeypatch):
+    from app.config import settings
+
+    mid = (await client.post("/api/meetings", json={"title": "q"})).json()["id"]
+    token = client.headers.pop("Authorization").split(" ", 1)[1]
+    # audio route-д зөвшөөрнө (файл байхгүй тул 404, харин 401 биш)
+    assert (await client.get(f"/api/meetings/{mid}/audio?token={token}")).status_code == 404
+    monkeypatch.setattr(settings, "allow_query_token", False)
+    assert (await client.get(f"/api/meetings/{mid}/audio?token={token}")).status_code == 401
 
 
 def test_database_url_normalization():

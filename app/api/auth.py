@@ -30,6 +30,13 @@ def me(user: UserResponse = Depends(auth.current_user)) -> UserResponse:
     return user
 
 
+@router.post("/logout-all")
+def logout_all(user: UserResponse = Depends(auth.current_user)) -> dict:
+    """Бүх төхөөрөмж дээрх токенийг хүчингүй болгоно; энэ төхөөрөмжид шинэ токен өгнө."""
+    auth.revoke_all_tokens(user.id)
+    return {"token": auth.create_token(user.id)}
+
+
 @router.patch("/me", response_model=UserResponse)
 def update_me(body: UserUpdate, user: UserResponse = Depends(auth.current_user)) -> UserResponse:
     updated = auth.update_name(user.id, body.name)

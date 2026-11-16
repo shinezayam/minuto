@@ -23,6 +23,7 @@ from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
 from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
+from app.services import auth as auth_service
 from app.services.auth import current_user
 
 logger = logging.getLogger(__name__)
@@ -380,8 +381,31 @@ def get_minutes(meeting_id: str, user: UserResponse = Depends(current_user)) -> 
     return MeetingMinutes(**{**minutes, "prepared_by": _prepared_by(user)})
 
 
+@router.post("/{meeting_id}/ws-ticket")
+def create_ws_ticket(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    """WebSocket холболтод зориулсан ≤60 сек, нэг удаагийн, зөвхөн энэ хуралд хүчинтэй тасалбар."""
+    _owned(meeting_id, user)
+    ttl = settings.ws_ticket_ttl_sec
+    return {"ticket": auth_service.create_ticket(user.id, meeting_id, "ws", ttl), "expires_in": ttl}
+
+
+@router.post("/{meeting_id}/audio-url")
+def create_audio_url(meeting_id: str, user: UserResponse = Depends(current_user)) -> dict:
+    """<audio>-д зориулсан богино настай гарын үсэгтэй линк (нэвтрэлтийн токен URL-д орохгүй)."""
+    _owned(meeting_id, user)
+    ttl = settings.audio_url_ttl_sec
+    sig = auth_service.create_ticket(user.id, meeting_id, "audio", ttl)
+    return {"url": f"/api/meetings/{meeting_id}/audio?sig={sig}", "expires_in": ttl}
+
+
 @router.get("/{meeting_id}/audio")
-async def get_audio(meeting_id: str, user: UserResponse = Depends(current_user)):
+async def get_audio(meeting_id: str, request: Request):
+    # Өөрөө нэвтрэлт шалгана: Authorization header, эсвэл ?sig= (гарын үсэгтэй, хугацаатай линк), эсвэл (шилжилтийн хугацаанд) ?token=
+    user = auth_service.verify_ticket(request.query_params.get("sig"), "audio", meeting_id)
+    if user is None:
+        user = auth_service.user_from_token(auth_service.token_from_request(request))
+    if user is None:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED: Нэвтэрнэ үү", headers={"WWW-Authenticate": "Bearer"})
     _owned(meeting_id, user)
     audio = await asyncio.to_thread(find_meeting_audio, processing.meeting_dir(meeting_id))
     if not audio:

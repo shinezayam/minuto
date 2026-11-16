@@ -13,7 +13,7 @@ from app.models.schemas import WSAck, WSError, WSRecordingReady
 from app.services.audio_ingest import audio_ingest
 from app.services import live_transcriber, meeting_store, processing
 from app.services import upload_guard as guard
-from app.services.auth import user_from_token
+from app.services.auth import user_from_token, verify_ticket
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,8 +46,12 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
 
     await websocket.accept()
 
-    # Хөтчийн WebSocket header явуулж чаддаггүй тул токенийг ?token=... хэлбэрээр авна
-    user = user_from_token(websocket.query_params.get("token"))
+    # Хөтчийн WebSocket header явуулж чаддаггүй тул богино настай нэг удаагийн ?ticket=... авна.
+    # (Хуучин ?token= нь шилжилтийн хугацаанд л хүчинтэй — settings.allow_query_token)
+    user = verify_ticket(websocket.query_params.get("ticket"), "ws", meeting_id, single_use=True)
+    if user is None and settings.allow_query_token and websocket.query_params.get("token"):
+        logger.warning("Deprecated WS ?token= used for meeting %s", meeting_id)
+        user = user_from_token(websocket.query_params.get("token"))
     if not user:
         await _send_error(websocket, "UNAUTHORIZED", "Нэвтэрнэ үү")
         await websocket.close(code=4401)
