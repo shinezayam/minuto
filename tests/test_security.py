@@ -152,3 +152,15 @@ def test_production_requires_jwt_secret(monkeypatch):
     with pytest.raises(RuntimeError):
         with TestClient(app):
             pass
+
+
+async def test_cors_preflight_allows_if_match_for_editing(anon_client: AsyncClient, monkeypatch):
+    """Frontend PUT-д If-Match явуулдаг: CORS preflight зөвшөөрөхгүй бол хөтчид "сервертэй холбогдож чадсангүй" гэж харагдана."""
+    origin = settings.cors_origins.split(",")[0].strip()
+    r = await anon_client.options(
+        "/api/meetings/x/transcript",
+        headers={"Origin": origin, "Access-Control-Request-Method": "PUT", "Access-Control-Request-Headers": "authorization,content-type,if-match"},
+    )
+    assert r.status_code == 200, r.text
+    allowed = r.headers["access-control-allow-headers"].lower()
+    assert "if-match" in allowed and "authorization" in allowed
