@@ -7,8 +7,12 @@ Backend: Render (FastAPI). Frontend: Vercel (Next.js). Data: Postgres (Render) a
   limiter live in process memory. Do not scale out to >1 instance/worker until they move to a shared store.
 * **Render free tier is not suitable for a pilot**: the disk is wiped on every deploy/restart (recordings are
   lost), the service sleeps, 512 MB RAM, and the free Postgres expires after 30 days.
-* The audio files currently live on the local disk (`AUDIO_STORAGE_PATH`). Until task 2.2 ships, use a Render
-  persistent disk or accept loss on deploy.
+* Audio: with `AUDIO_STORAGE_BACKEND=local` (default) files live only on the instance disk and are lost on deploy.
+  With `supabase` the final audio file of each meeting is copied to Supabase Storage (upload → immediately,
+  live recording → when the meeting ends / on process) and restored on demand (playback, processing).
+  Live-recording chunks exist only on disk until the recording is consolidated: a restart *during* a recording loses it.
+  Per-user quota counting uses the local disk, so it under-counts after a disk wipe.
+  One-time Supabase setup: create a **private** bucket named as `SUPABASE_AUDIO_BUCKET`; never expose the service-role key to the browser.
 
 ## Environment variables (backend)
 | Variable | Required in prod | Default | Notes |
@@ -19,6 +23,7 @@ Backend: Render (FastAPI). Frontend: Vercel (Next.js). Data: Postgres (Render) a
 | `CORS_ORIGINS` | yes | `http://localhost:3000` | Comma list of frontend origins. Also the WebSocket Origin allow-list unless `WS_ALLOWED_ORIGINS` is set. |
 | `QWEN_API_KEY` | yes (if providers ≠ demo) | – | Secret, set in the dashboard, never in git. |
 | `ASR_PROVIDER` / `LLM_PROVIDER` | yes | `demo` | `omni`/`whisper` and `qwen`. |
+| `AUDIO_STORAGE_BACKEND` | **yes for pilots** | `local` | `supabase` keeps every meeting's audio in a private Supabase Storage bucket (disk becomes a cache; survives deploys). Needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-side secret), `SUPABASE_AUDIO_BUCKET` (private bucket, default `meeting-audio-private`). Startup fails if misconfigured. |
 | `ALLOWED_HOSTS` | recommended | `*` | e.g. `minuto-api.onrender.com`. |
 | `ALLOW_QUERY_TOKEN` | – | `true` | Deprecation window for `?token=` on audio/export + WS. Set `false` once old frontends are gone. |
 | `MAX_UPLOAD_BYTES` | – | 300 MB | Single upload. |

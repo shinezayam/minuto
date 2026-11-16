@@ -49,9 +49,16 @@ def find_meeting_audio(meeting_dir: Path) -> Optional[Path]:
 
     ext = next((p.suffix for p in chunks if p.suffix != ".bin"), ".webm")
     combined = meeting_dir / f"recorded{ext}"
-    with combined.open("wb") as out:
+    # Нэг удаа нийлүүлээд кэшлэнэ: хэсгүүд өөрчлөгдөөгүй бол (нийт хэмжээ ижил) дахин бичихгүй
+    expected = sum(p.stat().st_size for p in chunks)
+    if combined.exists() and combined.stat().st_size == expected and combined.stat().st_mtime >= max(p.stat().st_mtime for p in chunks):
+        return combined
+    tmp = combined.with_suffix(combined.suffix + ".tmp")
+    with tmp.open("wb") as out:
         for p in chunks:
-            out.write(p.read_bytes())
+            with p.open("rb") as src:
+                shutil.copyfileobj(src, out, 1024 * 1024)  # бүтэн хэсгийг санах ойд уншихгүй
+    tmp.replace(combined)
     return combined
 
 

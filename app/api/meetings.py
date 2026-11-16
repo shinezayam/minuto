@@ -28,7 +28,7 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
-from app.services import transcript_edit
+from app.services import audio_store, transcript_edit
 from app.services import upload_guard as guard
 from app.services.audio_utils import find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
@@ -119,12 +119,22 @@ def resume_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) 
     return meeting
 
 
+async def _persist_in_background(meeting_id: str) -> None:
+    try:
+        await asyncio.to_thread(audio_store.persist, meeting_id)
+    except Exception:  # noqa: BLE001 — /process дахин оролдоно
+        logger.exception("Background audio persist failed for meeting %s", meeting_id)
+
+
 @router.post("/{meeting_id}/end", response_model=MeetingResponse)
 async def end_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
     meeting = meeting_store.end_meeting(meeting_id, user.id)
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     await live_transcriber.stop(meeting_id)  # бүтэн бичвэрийг /process гаргана
+    if audio_store.enabled():
+        # Бичлэг дууссан даруй нэг файл болгож байнгын хадгалалт руу хуулна (хариуг удаашруулахгүй)
+        asyncio.create_task(_persist_in_background(meeting_id))
     return meeting
 
 
@@ -133,8 +143,8 @@ async def delete_meeting(meeting_id: str, user: UserResponse = Depends(current_u
     if not meeting_store.delete_meeting(meeting_id, user.id):
         raise HTTPException(status_code=404, detail="Meeting not found")
     await live_transcriber.stop(meeting_id)
-    # Хурлыг устгахад аудио бичлэг ч устна
-    shutil.rmtree(processing.meeting_dir(meeting_id), ignore_errors=True)
+    # Хурлыг устгахад аудио бичлэг ч устна (remote амжилтгүй бол лог бичиж дараа дахин оролдоно)
+    await asyncio.to_thread(audio_store.purge, meeting_id)
 
 
 @router.post("/{meeting_id}/archive", response_model=MeetingResponse)
@@ -230,6 +240,13 @@ async def upload_audio(
     except guard.GuardError as e:
         filepath.unlink(missing_ok=True)
         raise HTTPException(status_code=e.status, detail=e.detail) from e
+
+    try:
+        await asyncio.to_thread(audio_store.persist, meeting_id)
+    except audio_store.StorageUnavailable:
+        logger.exception("Audio persist failed for meeting %s", meeting_id)
+        filepath.unlink(missing_ok=True)
+        raise HTTPException(status_code=503, detail="STORAGE_UNAVAILABLE: Аудиог хадгалж чадсангүй. Түр хүлээгээд дахин оролдоно уу.")
 
     return {
         "meeting_id": meeting_id,
@@ -360,8 +377,17 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
     Явцыг GET /api/meetings/{id} (processing_stage, processing_done/total, processing_error)-ээр харна.
     """
     _owned(meeting_id, user)
+    try:
+        await asyncio.to_thread(audio_store.ensure_local, meeting_id)
+    except audio_store.StorageUnavailable:
+        raise HTTPException(status_code=503, detail="STORAGE_UNAVAILABLE: Аудиог хадгалалтаас уншиж чадсангүй. Дахин оролдоно уу.")
     if not processing.has_audio(meeting_id):
         raise HTTPException(status_code=400, detail="NO_AUDIO: No audio file found. Please upload audio first.")
+    if audio_store.enabled():
+        try:  # шууд бичлэгийн нийлүүлсэн файл remote-д байхгүй бол одоо хуулна
+            await asyncio.to_thread(audio_store.persist, meeting_id)
+        except audio_store.StorageUnavailable:
+            logger.exception("Audio persist before processing failed for meeting %s", meeting_id)
     if not meeting_store.try_begin_processing(meeting_id):
         raise HTTPException(status_code=409, detail="ALREADY_PROCESSING: Энэ хурлыг боловсруулж байна")
     await live_transcriber.stop(meeting_id)
@@ -485,6 +511,10 @@ async def get_audio(meeting_id: str, request: Request):
     if user is None:
         raise HTTPException(status_code=401, detail="UNAUTHORIZED: Нэвтэрнэ үү", headers={"WWW-Authenticate": "Bearer"})
     _owned(meeting_id, user)
+    try:
+        await asyncio.to_thread(audio_store.ensure_local, meeting_id)
+    except audio_store.StorageUnavailable:
+        raise HTTPException(status_code=503, detail="STORAGE_UNAVAILABLE: Аудиог хадгалалтаас уншиж чадсангүй. Дахин оролдоно уу.")
     audio = await asyncio.to_thread(find_meeting_audio, processing.meeting_dir(meeting_id))
     if not audio:
         raise HTTPException(status_code=404, detail="No audio file found")

@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI):
     if settings.is_production and not settings.jwt_secret:
         # Нууцгүй бол сервер дахин эхлэх бүрт бүх хэрэглэгч гарч, олон instance-д токен таарахгүй
         raise RuntimeError("JWT_SECRET заавал тохируулна (production)")
+    from app.services import audio_store
+
+    audio_store.validate_config()  # AUDIO_STORAGE_BACKEND буруу бол эхлэхгүй
     db.configure()
     if settings.is_production and db.dialect() == "sqlite":
         logger.error("PRODUCTION is using SQLite: data is lost on every deploy. Set DATABASE_URL to a Postgres instance.")
@@ -123,6 +126,12 @@ def readyz(user: UserResponse = Depends(current_user)) -> dict:
         checks["storage"] = {"ok": free >= settings.min_free_disk_bytes, "free_mb": free // 1_000_000}
     except OSError:
         checks["storage"] = {"ok": False}
+    from app.services import audio_store
+
+    checks["storage"]["durable"] = audio_store.enabled()
+    if not audio_store.enabled() and settings.is_production:
+        checks["storage"]["warning"] = "Аудио зөвхөн сервер дээрх дискэнд: deploy бүрт арилна (AUDIO_STORAGE_BACKEND=supabase)"
+    checks["storage"]["pending_purges"] = len(audio_store.pending_purges())
     checks["providers"] = {
         "asr": settings.asr_provider,
         "llm": settings.llm_provider,

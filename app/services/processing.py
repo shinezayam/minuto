@@ -15,6 +15,7 @@ from app.services import llm as llm_mod
 from app.models.minutes import TranscriptSegment
 from app.services import meeting_store, vocabulary
 from app.services.asr import ProviderError
+from app.services import audio_store
 from app.services.audio_utils import find_meeting_audio
 from app.services.speakers import apply_speaker_map
 
@@ -36,6 +37,7 @@ def has_audio(meeting_id: str) -> bool:
 async def run(meeting_id: str) -> None:
     stage = "transcribing"
     try:
+        await asyncio.to_thread(audio_store.ensure_local, meeting_id)  # restart/deploy-оор диск арилсан бол remote-оос сэргээнэ
         audio = await asyncio.to_thread(find_meeting_audio, meeting_dir(meeting_id))
         if not audio:
             meeting_store.finish_processing(meeting_id, "NO_AUDIO: Аудио файл олдсонгүй")

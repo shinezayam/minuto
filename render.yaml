@@ -34,6 +34,10 @@ services:
       # Нэвтрэлтийн токены нууц — Render нэг удаа санамсаргүйгээр үүсгэнэ
       - key: JWT_SECRET
         generateValue: true
+      # Байнгын аудио хадгалалт: Supabase-д private bucket үүсгэж, доорх 3 нууцыг dashboard дээр оруулаад AUDIO_STORAGE_BACKEND=supabase болго
+      # - key: AUDIO_STORAGE_BACKEND
+      #   value: supabase
+      # - key: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_AUDIO_BUCKET  (sync: false)
       - key: AUDIO_STORAGE_PATH
         value: ./audio_storage
       - key: MAX_AUDIO_CHUNK_BYTES

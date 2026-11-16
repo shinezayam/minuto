@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     user_total_storage_bytes: int = 10_000_000_000  # нэг хэрэглэгчийн нийт аудио
     min_free_disk_bytes: int = 500_000_000  # диск энэнээс бага чөлөөтэй бол шинэ аудио авахгүй
     audio_storage_path: str = "./audio_storage"
+    # "local" = зөвхөн сервер дээрх диск (Render free дээр deploy бүрт арилна) | "supabase" = Supabase Storage-д байнга хадгална
+    # (диск нь ажлын кэш болно). supabase_url, supabase_service_role_key, supabase_audio_bucket (private) шаардлагатай.
+    audio_storage_backend: str = "local"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
