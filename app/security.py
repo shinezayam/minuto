@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import re
 import time
+import uuid
 from collections import deque
 from typing import Deque, Dict, Optional, Tuple
 
@@ -116,3 +119,34 @@ def ws_origin_allowed(origin: Optional[str]) -> bool:
         return True
     allowed = settings.ws_origins()
     return "*" in allowed or origin.rstrip("/") in allowed
+
+
+_access_log = logging.getLogger("minuto.access")
+
+
+class RequestLogMiddleware(BaseHTTPMiddleware):
+    """Хүсэлт бүрт X-Request-ID өгч, JSON мөр лог бичнэ.
+
+    Зориуд БИЧИХГҮЙ зүйл: query string (?token=, ?ticket=, ?sig= агуулж болно), header, body (бичвэр, нууц үг).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        rid = request.headers.get("x-request-id", "")[:64] or uuid.uuid4().hex[:16]
+        rid = re.sub(r"[^A-Za-z0-9_.-]", "", rid) or uuid.uuid4().hex[:16]
+        start = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers["X-Request-ID"] = rid
+            return response
+        finally:
+            _access_log.info(
+                json.dumps(
+                    {
+                        "event": "request", "request_id": rid, "method": request.method, "path": request.url.path,
+                        "status": status, "duration_ms": round((time.perf_counter() - start) * 1000, 1), "ip": client_ip(request),
+                    },
+                    ensure_ascii=False,
+                )
+            )

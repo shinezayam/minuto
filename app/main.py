@@ -3,15 +3,16 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app import db
 from app.config import settings
-from app.models.schemas import HealthResponse
-from app.security import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.models.schemas import HealthResponse, UserResponse
+from app.services.auth import current_user
+from app.security import RateLimitMiddleware, RequestLogMiddleware, SecurityHeadersMiddleware
 from app.api.ask import router as ask_router
 from app.api.auth import router as auth_router
 from app.api.contacts import router as contacts_router
@@ -32,6 +33,8 @@ async def lifespan(app: FastAPI):
         # Нууцгүй бол сервер дахин эхлэх бүрт бүх хэрэглэгч гарч, олон instance-д токен таарахгүй
         raise RuntimeError("JWT_SECRET заавал тохируулна (production)")
     db.configure()
+    if settings.is_production and db.dialect() == "sqlite":
+        logger.error("PRODUCTION is using SQLite: data is lost on every deploy. Set DATABASE_URL to a Postgres instance.")
     interrupted = meeting_store.fail_interrupted_processing()
     if interrupted:
         logger.warning("%d meeting(s) were interrupted by a restart and marked as failed", interrupted)
@@ -51,6 +54,7 @@ app = FastAPI(
 
 # Security middleware
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestLogMiddleware)
 app.add_middleware(RateLimitMiddleware)
 _hosts = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()] or ["*"]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
@@ -85,6 +89,47 @@ async def health() -> HealthResponse:
         database=db.dialect(),
         live_transcription=live_transcriber.enabled(),
     )
+
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    """Liveness: процесс хариу өгч байна. Нууц/тохиргооны мэдээлэл байхгүй, DB-д хандахгүй."""
+    return {"status": "ok"}
+
+
+@app.get("/api/readyz")
+def readyz(user: UserResponse = Depends(current_user)) -> dict:
+    """Readiness (нэвтэрсэн хэрэглэгчид): DB, хадгалах зай, provider-ийн тохиргоог шалгана. Гадагш (Qwen) дуудлага хийхгүй → зардалгүй."""
+    import shutil
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    checks: dict = {}
+    try:
+        with db.session_scope() as s:
+            s.execute(text("SELECT 1"))
+        checks["database"] = {"ok": True, "dialect": db.dialect(), "persistent": db.dialect() != "sqlite"}
+    except Exception:  # noqa: BLE001
+        logger.exception("readyz: database check failed")
+        checks["database"] = {"ok": False}
+    root = Path(settings.audio_storage_path)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / ".readyz"
+        probe.write_text("ok")
+        probe.unlink()
+        free = shutil.disk_usage(root).free
+        checks["storage"] = {"ok": free >= settings.min_free_disk_bytes, "free_mb": free // 1_000_000}
+    except OSError:
+        checks["storage"] = {"ok": False}
+    checks["providers"] = {
+        "asr": settings.asr_provider,
+        "llm": settings.llm_provider,
+        "qwen_key_configured": bool(settings.qwen_api_key) or (settings.asr_provider == "demo" and settings.llm_provider == "demo"),
+    }
+    ok = checks["database"]["ok"] and checks["storage"]["ok"] and checks["providers"]["qwen_key_configured"]
+    return {"status": "ready" if ok else "degraded", "checks": checks}
 
 
 @app.exception_handler(Exception)
