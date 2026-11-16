@@ -56,10 +56,16 @@ Frontend (Vercel): `NEXT_PUBLIC_API_BASE_URL` = the backend URL (build-time).
 5. Rollback: redeploy the previous commit. If a migration ran and is reversible,
    `python -m app.migrate downgrade <rev>`; otherwise restore the dump.
 
+## Smoke test (staging / after every deploy)
+`python scripts/smoke.py https://<backend-url>` registers a throw-away user, uploads a 1 s tone, processes it, reads the
+transcript, plays audio through a signed URL, exports DOCX/PDF, deletes the meeting and reports PASS/FAIL per step
+(exit code 1 on failure). Use demo providers on staging so it costs nothing. The script is itself tested against the
+real app in `tests/test_smoke_script.py`.
+
 ## Contract between frontend and backend
 `docs/openapi.json` is a committed snapshot. `tests/test_ops.py` fails when the API changes without updating it
 (`python -m app.openapi_snapshot`), so a contract change is always a deliberate, reviewed diff.
 
 ## Not done yet (see PRODUCTION_READINESS_TODO.md)
-Staging environment + smoke script, error tracking (Sentry/Render alerts), shared store for multi-instance,
+A real staging environment (the smoke script exists), error tracking (Sentry/Render alerts), shared store for multi-instance,
 persistent audio storage (2.2), durable jobs (2.1).
