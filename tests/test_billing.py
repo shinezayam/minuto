@@ -392,7 +392,8 @@ def _sign(body: bytes, secret: str, ts: int | None = None) -> str:
     return f"t={ts},v1=" + hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
 
 
-def test_wire_provider_create_confirm_check_and_webhook():
+def test_wire_provider_hosted_checkout_check_and_webhook():
+    """docs.wire.mn: PaymentIntent → /v1/checkout/sessions (url) — /confirm дуудахгүй."""
     seen: list = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -400,23 +401,22 @@ def test_wire_provider_create_confirm_check_and_webhook():
         if req.url.path == "/v1/payment_intents" and req.method == "POST":
             body = json.loads(req.content)
             assert body["amount"] == 69900 and body["currency"] == "MNT" and body["metadata"]["order_id"] == "ord-1"
+            assert req.headers["content-type"].startswith("application/json")
             return httpx.Response(200, json={"id": "pi_1", "amount": 69900, "status": "requires_payment_method"})
-        if req.url.path == "/v1/payment_intents/pi_1/confirm":
-            assert json.loads(req.content)["return_url"].endswith("?order=ord-1")
-            return httpx.Response(200, json={"id": "pi_1", "status": "requires_action", "next_action": {
-                "type": "qpay", "qpay": {"qr_text": "000201...", "qr_image": "iVBORw0KGgo=",
-                                         "urls": [{"name": "Khan bank", "link": "khanbank://q?qPay_QRcode=1", "logo": None}]}}})
+        if req.url.path == "/v1/checkout/sessions":
+            body = json.loads(req.content)
+            assert body["payment_intent"] == "pi_1" and body["success_url"].endswith("?order=ord-1")
+            return httpx.Response(200, json={"id": "cs_1", "object": "checkout.session", "url": "https://pay.wire.mn/c/cs_1", "status": "open"})
         if req.url.path == "/v1/payment_intents/pi_1":
             return httpx.Response(200, json={"id": "pi_1", "amount": 69900, "currency": "MNT", "status": "succeeded",
                                              "metadata": {"order_id": "ord-1"}})
         return httpx.Response(404, json={"error": {"code": "not_found"}})
 
-    p = payments.WireProvider("sk_test_x", "whsec_abc", transport=httpx.MockTransport(handler))
+    p = payments.WireProvider("sk_live_x", "whsec_abc", transport=httpx.MockTransport(handler))
     created = p.create_payment(payments.OrderRef("ord-1", 69900, "Minuto Pro", "https://app.example/billing/return?order=ord-1"))
-    assert created.provider_ref == "pi_1"
-    assert created.payment.qr_text == "000201..." and created.payment.qr_image == "iVBORw0KGgo="
-    assert created.payment.deep_links[0]["name"] == "Khan bank"
-    assert seen[0][2] == "Bearer sk_test_x" and seen[0][3] == "minuto-ord-1" and seen[1][3] == "minuto-ord-1-confirm"
+    assert created.provider_ref == "pi_1" and created.payment.redirect_url == "https://pay.wire.mn/c/cs_1"
+    assert [x[1] for x in seen] == ["/v1/payment_intents", "/v1/checkout/sessions"]
+    assert seen[0][2] == "Bearer sk_live_x" and seen[0][3] == "minuto-ord-1" and seen[1][3] == "minuto-ord-1-checkout"
 
     check = p.check_payment("pi_1")
     assert (check.status, check.amount_mnt, check.order_id) == ("paid", 69900, "ord-1")
@@ -425,6 +425,24 @@ def test_wire_provider_create_confirm_check_and_webhook():
     assert p.parse_webhook(body, {"wirepayment-signature": _sign(body, "whsec_abc")}) == "pi_1"
     with pytest.raises(payments.InvalidSignature):
         p.parse_webhook(body, {"wirepayment-signature": _sign(body, "whsec_wrong")})
+    ping = json.dumps({"id": "evt_2", "type": "endpoint.verification", "data": {"object": {}}}).encode()
+    assert p.parse_webhook(ping, {"wirepayment-signature": _sign(ping, "whsec_abc")}) is None  # verify ping → 200
+
+
+def test_documented_qr_next_action_shape():
+    info = payments.payment_info_from_next_action(
+        {"type": "qr", "qr": {"text": "000201010212", "deeplinks": [{"name": "Khan bank", "link": "khanbank://q?qPay_QRcode=1"}]}})
+    assert info.qr_text == "000201010212" and info.deep_links[0]["name"] == "Khan bank" and info.redirect_url is None
+
+
+async def test_verification_ping_gets_200(client, monkeypatch):
+    payments.set_provider(payments.WireProvider("k", "whsec_abc", transport=httpx.MockTransport(lambda r: httpx.Response(500))))
+    try:
+        ping = json.dumps({"id": "evt_2", "type": "endpoint.verification", "data": {"object": {}}}).encode()
+        r = await client.post("/api/billing/webhooks/wire", content=ping, headers={"WirePayment-Signature": _sign(ping, "whsec_abc")})
+        assert r.status_code == 200
+    finally:
+        payments.set_provider(None)
 
 
 def test_wire_provider_maps_errors():

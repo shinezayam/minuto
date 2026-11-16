@@ -23,14 +23,20 @@ Production backend: `https://minuto-ai-meeting-assistant.onrender.com`. Default 
 - Ашиглаагүй минут дараагийн хугацаанд шилжихгүй. Сунгалт одоогийн хугацаа дууссаны дараа эхэлнэ, ахиулалт шууд эхэлнэ.
 - Цуцлах: хугацаа дуустал ашиглаад, дахин сунгахгүй. Буцаан олголт болон ахиулалтын үнийн зөрүүний дүрэм хараахан **батлагдаагүй** (кодод байхгүй).
 
-## Wire тохируулах (нэг удаа)
-1. Wire dashboard → API keys: **test** (`sk_test_…`) түлхүүр ав. Production-д дараа нь `sk_live_…`.
-2. Wire dashboard → Webhooks → endpoint нэмнэ:
-   `https://minuto-ai-meeting-assistant.onrender.com/api/billing/webhooks/wire`
-   Events: `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled` (эсвэл бүгд). Үүсгэх үед
-   гарч ирэх `whsec_…` secret-ийг хадгална (дахин харагдахгүй).
-3. Render → minuto service → Environment (chat, git-д **хэзээ ч** бичихгүй):
-   `WIRE_API_KEY`, `WIRE_WEBHOOK_SECRET`, `FRONTEND_URL=https://mongolian-ai-minutes.vercel.app`.
+## Wire тохируулах (нэг удаа) — docs.wire.mn
+Wire-д **test горим байхгүй**: API зөвхөн `sk_live_…` түлхүүр хүлээн авна (`sk_test_` → `401 test_mode_unavailable`).
+Тиймээс эхний шалгалт бол жинхэнэ, хамгийн бага (Starter) төлбөр.
+
+1. `app.wire.mn` → Project → Keys: `sk_live_…` түлхүүр үүсгэнэ. Түлхүүрийг chat, git, мессежэд **хэзээ ч** бичихгүй.
+2. Render → minuto service → Environment: `WIRE_API_KEY`, `FRONTEND_URL=https://mongolian-ai-minutes.vercel.app` → Save.
+3. Webhook бүртгэх (Render → minuto → **Shell**):
+   `python -m app.wire_setup`
+   Гарч ирэх `WIRE_WEBHOOK_SECRET=whsec_…` мөрийг Render env-д нэмнэ (дахин харагдахгүй) → Save (сервис дахин эхэлнэ).
+4. Wire dashboard дээр шинэ endpoint-ийг **Verify** дарна (Wire гарын үсэгтэй ping явуулна, бид 200 буцаана).
+5. `BILLING_CHECKOUT_ENABLED=true` → Starter-ээр нэг удаа өөрөө төлж шалгана.
+
+Төлбөрийн урсгал: PaymentIntent → Hosted checkout (`pay.wire.mn/c/…`). Худалдан авагч тэнд QPay болон бусад операторыг сонгоно.
+Intent 10 минутад дуусна (захиалга `cancelled` болно; дахин "Төлөх" дарвал шинэ захиалга).
 
 Webhook-ийн биеийн агуулгад итгэхгүй. Гарын үсгийг (`WirePayment-Signature`, HMAC-SHA256, 5 минутын tolerance) шалгасны дараа
 intent-ийг сервер талаас `GET /v1/payment_intents/{id}`-ээр дахин уншина. Багц зөвхөн дараах гурван нөхцөл зэрэг биелэхэд идэвхжинэ:

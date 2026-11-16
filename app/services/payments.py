@@ -150,7 +150,10 @@ def payment_info_from_next_action(next_action: Any) -> PaymentInfo:
     if not next_action:
         return PaymentInfo()
     redirect = _find(next_action, ("url", "redirect_url", "hosted_url", "payment_url", "checkout_url", "short_url"))
-    qr_text = _find(next_action, ("qr_text", "qr_code", "qr"))
+    # docs.wire.mn: {"type": "qr", "qr": {"text": "...", "deeplinks": [{name, link}]}}
+    qr_obj = next_action.get("qr") if isinstance(next_action, dict) else None
+    qr_text = qr_obj.get("text") if isinstance(qr_obj, dict) else None
+    qr_text = qr_text or _find(next_action, ("qr_text", "qr_code"))
     qr_image = _find(next_action, ("qr_image", "qr_image_b64", "qr_png"))
     links_raw = _find(next_action, ("deep_links", "deeplinks", "urls", "bank_links"))
     links: List[dict] = []
@@ -210,19 +213,33 @@ class WireProvider:
         raise ProviderUnavailable("retries exhausted")  # pragma: no cover
 
     def create_payment(self, order: OrderRef) -> CreatedPayment:
-        meta = {"order_id": order.order_id, "description": order.description[:200], **order.metadata}
+        """PaymentIntent + Hosted checkout session (docs.wire.mn/docs/guides/hosted-checkout).
+        Худалдан авагч pay.wire.mn/c/... дээр QPay болон бусад операторыг сонгож төлнө. /confirm дуудахгүй (docs-ийн дагуу)."""
+        meta = {"order_id": order.order_id, **{k[:40]: str(v)[:500] for k, v in order.metadata.items()}}
         pi = self._request("POST", "/v1/payment_intents",
-                           {"amount": order.amount_mnt, "currency": "MNT", "metadata": meta}, idem=f"minuto-{order.order_id}")
+                           {"amount": order.amount_mnt, "currency": "MNT", "description": order.description[:200], "metadata": meta},
+                           idem=f"minuto-{order.order_id}")
         pi_id = pi.get("id")
         if not isinstance(pi_id, str) or not pi_id:
             raise ProviderRejected("no payment intent id")
         if int(pi.get("amount") or -1) != order.amount_mnt:
             raise ProviderRejected("amount mismatch on create")
-        confirmed = self._request("POST", f"/v1/payment_intents/{pi_id}/confirm",
-                                  {"return_url": order.return_url}, idem=f"minuto-{order.order_id}-confirm")
-        exp = confirmed.get("expires_at") or pi.get("expires_at")
+        session = self._request("POST", "/v1/checkout/sessions",
+                                {"payment_intent": pi_id, "success_url": order.return_url, "cancel_url": order.return_url},
+                                idem=f"minuto-{order.order_id}-checkout")
+        url = session.get("url")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise ProviderRejected("no checkout url")
+        exp = pi.get("expires_at")
         expires_at = datetime.fromtimestamp(int(exp), timezone.utc) if isinstance(exp, (int, float)) else None
-        return CreatedPayment(provider_ref=pi_id, payment=payment_info_from_next_action(confirmed.get("next_action")), expires_at=expires_at)
+        return CreatedPayment(provider_ref=pi_id, payment=PaymentInfo(redirect_url=url), expires_at=expires_at)
+
+    def register_webhook(self, url: str) -> dict:
+        """POST /v1/webhook_endpoints. Буцаах secret (whsec_…) зөвхөн НЭГ удаа ирнэ."""
+        return self._request("POST", "/v1/webhook_endpoints",
+                             {"url": url, "enabled_events": ["payment_intent.succeeded", "payment_intent.payment_failed",
+                                                             "payment_intent.canceled"]},
+                             idem=f"minuto-webhook-{hashlib.sha256(url.encode()).hexdigest()[:16]}")
 
     def check_payment(self, provider_ref: str) -> PaymentCheck:
         pi = self._request("GET", f"/v1/payment_intents/{provider_ref}")
