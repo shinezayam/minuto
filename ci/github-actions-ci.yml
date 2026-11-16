@@ -1,0 +1,37 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Төлбөртэй түлхүүр CI-д ХЭЗЭЭ Ч байхгүй: provider-ууд demo, QWEN_API_KEY хоосон. Тестүүд сүлжээнд хандахгүй.
+    env:
+      ASR_PROVIDER: demo
+      LLM_PROVIDER: demo
+      QWEN_API_KEY: ""
+      DATABASE_URL: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Migrations reach head and match the models
+        run: python -m pytest -q tests/test_migrations.py
+      - name: API contract snapshot is current
+        run: python -m pytest -q tests/test_ops.py::test_openapi_contract_snapshot_is_up_to_date
+      - name: Test suite
+        run: python -m pytest -q
