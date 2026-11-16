@@ -327,3 +327,77 @@ async def test_qwen_http_error(qwen_key, monkeypatch):
     _patch_httpx(monkeypatch, lambda req: httpx.Response(500, text="boom"))
     with pytest.raises(asr_mod.ProviderError, match="500"):
         await llm_mod.QwenLLMProvider().generate_minutes(TRANSCRIPT)
+
+
+# ---------- Дискийн ачаалал багатай ASR (FLAC нэг удаа, хэсгийг хэрэгтэй үед нь) ----------
+
+@needs_ffmpeg
+async def test_omni_leaves_no_temp_files_and_cleans_legacy_parts(tmp_path, qwen_key, monkeypatch):
+    monkeypatch.setattr(settings, "omni_chunk_sec", 10)
+    src = tmp_path / "meeting.mp3"
+    _make_tone(src, 25)
+    legacy = tmp_path / "_asr_parts"
+    legacy.mkdir()
+    (legacy / "part_0000.wav").write_bytes(b"x" * 1000)  # хуучин хувилбарын үлдэгдэл
+    seen_work_files: list = []
+
+    def handler(req):
+        work = tmp_path / "_asr_work"
+        seen_work_files.append(sorted(p.name for p in work.iterdir()) if work.exists() else [])
+        return httpx.Response(200, content=_sse("ok"))
+
+    _patch_httpx(monkeypatch, handler)
+    segs = await asr_mod.QwenOmniASRProvider().transcribe(str(src))
+    assert len(segs) == 3
+    # Хэсгүүдийг урьдчилан бүгдийг нь биш, зэрэг ажиллах тооноос хэтрэхгүйгээр гаргаж, уншмагц устгана
+    assert all("source.flac" in files for files in seen_work_files)
+    assert max(len(files) - 1 for files in seen_work_files) <= settings.asr_concurrency
+    assert not (tmp_path / "_asr_work").exists() and not legacy.exists()
+    assert not [p.name for p in tmp_path.iterdir() if p.name.startswith("_asr")]
+
+
+@needs_ffmpeg
+async def test_omni_cleans_up_after_provider_failure(tmp_path, qwen_key, monkeypatch):
+    src = tmp_path / "m.mp3"
+    _make_tone(src, 3)
+    _patch_httpx(monkeypatch, lambda req: httpx.Response(401, json={"error": {"message": "bad key"}}))
+    with pytest.raises(asr_mod.ProviderError):
+        await asr_mod.QwenOmniASRProvider().transcribe(str(src))
+    assert not (tmp_path / "_asr_work").exists()
+
+
+async def test_disk_full_is_retried_and_provider_text_is_hidden(monkeypatch):
+    import errno
+
+    from app.services import jobs, processing
+
+    class Job:
+        chunks: dict = {}
+        def can_retry(self):
+            return True
+        def save_chunk(self, i, d):
+            pass
+
+    monkeypatch.setattr(processing, "find_meeting_audio", lambda d: Path("x.wav"))
+    monkeypatch.setattr(processing.audio_store, "ensure_local", lambda mid: True)
+    monkeypatch.setattr(processing.vocabulary, "for_meeting",
+                        lambda mid: type("V", (), {"hints": [], "topic": None, "corrections": []})())
+    progress: list = []
+    finished: list = []
+    monkeypatch.setattr(processing.meeting_store, "set_progress", lambda *a, **k: progress.append(a))
+    monkeypatch.setattr(processing.meeting_store, "finish_processing", lambda mid, err=None: finished.append(err))
+
+    async def disk_full(*a, **k):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(asr_mod.asr_provider, "transcribe", disk_full)
+    with pytest.raises(jobs.RetryLater):
+        await processing.run("m1", Job())
+    assert ("m1", "retrying") in progress and finished == []
+
+    async def provider_down(*a, **k):
+        raise asr_mod.ProviderError("upstream said: secret-internal-host 10.0.0.5 timeout")
+
+    monkeypatch.setattr(asr_mod.asr_provider, "transcribe", provider_down)
+    assert await processing.run("m1", None) is False  # job байхгүй → дахин оролдохгүй
+    assert finished[-1].startswith("ASR_FAILED: ") and "10.0.0.5" not in finished[-1]

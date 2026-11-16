@@ -4,6 +4,8 @@ import asyncio
 import base64
 import json
 import logging
+import math
+import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Protocol
@@ -12,7 +14,7 @@ import httpx
 
 from app.config import settings
 from app.models.minutes import TranscriptSegment
-from app.services.audio_utils import split_to_wav, wav_duration_ms
+from app.services.audio_utils import extract_wav, to_flac, wav_bytes_duration_ms
 
 logger = logging.getLogger(__name__)
 
@@ -117,38 +119,52 @@ class QwenOmniASRProvider:
     async def transcribe(
         self, audio_path: str, on_progress: ProgressCallback = None, context: ASRContext = NO_CONTEXT
     ) -> List[TranscriptSegment]:
+        """Дискийг бага ашиглана: аудиог НЭГ удаа mono FLAC болгоод (WAV-аас ~3 дахин бага), 30 секундын хэсэг бүрийг
+        хэрэгтэй үед нь гаргаж, илгээмэгц устгана. Оргил диск ≈ FLAC + (зэрэг ажиллах тоо × ~1MB). Дуусахад бүгд устна.
+        (Өмнө нь бүх хэсгийг урьдчилан WAV болгож — минутад ~1.9MB — хэзээ ч устгадаггүй байсан.)"""
         src = Path(audio_path)
         prompt = build_omni_prompt(context)
-        parts = await split_to_wav(src, src.parent / "_asr_parts", settings.omni_chunk_sec)
-        if not parts:
-            raise ValueError("Аудио хоосон байна")
+        work = src.parent / "_asr_work"
+        shutil.rmtree(src.parent / "_asr_parts", ignore_errors=True)  # хуучин хувилбарын үлдсэн хэсгүүд
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True)
+        try:
+            flac = work / "source.flac"
+            total_sec = await to_flac(src, flac)
+            chunk_sec = settings.omni_chunk_sec
+            n_parts = max(0, math.ceil(round(total_sec, 3) / chunk_sec))
+            if n_parts == 0:
+                raise ValueError("Аудио хоосон байна")
 
-        sem = asyncio.Semaphore(max(1, settings.asr_concurrency))
-        chunk_ms = settings.omni_chunk_sec * 1000
-        done = 0
-        if on_progress:
-            on_progress(0, len(parts))
+            sem = asyncio.Semaphore(max(1, settings.asr_concurrency))
+            chunk_ms = chunk_sec * 1000
+            done = 0
+            if on_progress:
+                on_progress(0, n_parts)
 
-        async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
+            async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:
 
-            async def one(i: int, part: Path) -> TranscriptSegment:
-                nonlocal done
-                start = i * chunk_ms
-                saved = context.resume.get(i)
-                if saved is not None:  # өмнөх оролдлогод дууссан: API дуудахгүй
-                    text, end = saved["text"], saved["end_ms"]
-                else:
-                    async with sem:
-                        text = await self._transcribe_bytes(client, part.read_bytes(), prompt)
-                    end = start + wav_duration_ms(part)
-                    if context.on_chunk:
-                        context.on_chunk(i, {"text": text, "start_ms": start, "end_ms": end})
-                done += 1
-                if on_progress:
-                    on_progress(done, len(parts))
-                return TranscriptSegment(id=f"seg_{i + 1}", start_ms=start, end_ms=end, text=text)
+                async def one(i: int) -> TranscriptSegment:
+                    nonlocal done
+                    start = i * chunk_ms
+                    saved = context.resume.get(i)
+                    if saved is not None:  # өмнөх оролдлогод дууссан: API дуудахгүй, хэсэг гаргахгүй
+                        text, end = saved["text"], saved["end_ms"]
+                    else:
+                        async with sem:
+                            wav = await extract_wav(flac, i * chunk_sec, chunk_sec, work / f"part_{i:05d}.wav")
+                            end = start + wav_bytes_duration_ms(wav)
+                            text = await self._transcribe_bytes(client, wav, prompt)
+                        if context.on_chunk:
+                            context.on_chunk(i, {"text": text, "start_ms": start, "end_ms": end})
+                    done += 1
+                    if on_progress:
+                        on_progress(done, n_parts)
+                    return TranscriptSegment(id=f"seg_{i + 1}", start_ms=start, end_ms=end, text=text)
 
-            segments = await asyncio.gather(*(one(i, p) for i, p in enumerate(parts)))
+                segments = await asyncio.gather(*(one(i) for i in range(n_parts)))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
         return [s for s in segments if s.text]
 

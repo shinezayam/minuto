@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 from pathlib import Path
 from typing import Set
@@ -80,12 +81,28 @@ async def run(meeting_id: str, job=None) -> bool:
 
     except (ProviderError, ValueError) as e:
         code = "SUMMARY_FAILED" if stage == "summarizing" else "ASR_FAILED"
-        logger.warning("Meeting %s %s: %s", meeting_id, code, e)
+        logger.warning("Meeting %s %s: %s", meeting_id, code, e)  # дэлгэрэнгүй (provider-ийн текст) зөвхөн лог руу
         if job is not None and isinstance(e, ProviderError) and job.can_retry():
             # Түр алдаа (сүлжээ, provider): дахин оролдоно. Meeting "processing" хэвээр, шат нь "retrying"
             meeting_store.set_progress(meeting_id, "retrying")
             raise jobs.RetryLater(f"{code}: {type(e).__name__}") from e
-        meeting_store.finish_processing(meeting_id, f"{code}: {e}")
+        if isinstance(e, ProviderError):
+            msg = "Хиймэл оюуны үйлчилгээ түр ажиллахгүй байна. Түр хүлээгээд дахин оролдоно уу."
+        else:
+            msg = str(e)[:200]  # ValueError-ууд манай өөрийн, хэрэглэгчид зориулсан мессеж
+        meeting_store.finish_processing(meeting_id, f"{code}: {msg}")
+        return False
+    except OSError as e:
+        if e.errno != errno.ENOSPC:
+            logger.exception("Meeting %s processing crashed (OSError)", meeting_id)
+            meeting_store.finish_processing(meeting_id, f"INTERNAL_ERROR: {type(e).__name__}")
+            return False
+        # Диск дүүрсэн: түр файлууд аль хэдийн устсан. Зай чөлөөлөгдөх боломжтой тул дахин оролдоно
+        logger.error("Meeting %s: disk full during processing", meeting_id)
+        if job is not None and job.can_retry():
+            meeting_store.set_progress(meeting_id, "retrying")
+            raise jobs.RetryLater("DISK_FULL") from e
+        meeting_store.finish_processing(meeting_id, "DISK_FULL: Серверийн диск дүүрсэн тул боловсруулж чадсангүй. Дараа дахин оролдоно уу.")
         return False
     except Exception as e:  # noqa: BLE001 — ямар ч алдаа "processing" төлөвт гацаахгүй
         logger.exception("Meeting %s processing crashed", meeting_id)

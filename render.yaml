@@ -1,3 +1,5 @@
+# ⚠ ЛАВЛАГАА. Production (minuto-ai-meeting-assistant) нь Render dashboard дээр гараар тохируулагдсан бөгөөд энэ файлаас
+# ялгаатай (нэр, plan, диск, env). Dashboard дээр "Blueprint sync" БҮҮ ДАР — тохиргоог энэ файлын утгаар дарж бичнэ.
 services:
   - type: web
     name: minuto-api
@@ -39,10 +41,13 @@ services:
       #   value: supabase
       # - key: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_AUDIO_BUCKET  (sync: false)
       # Billing (docs/BILLING.md): off → shadow (1 долоо хоног ажиглах) → enforce. Түлхүүрүүд dashboard дээр гараар.
+      # Утгыг dashboard дээр удирдана (sync: false) — Blueprint sync production-ий утгыг дарж бичихгүй
       - key: BILLING_METERING
-        value: "off"
+        sync: false
       - key: BILLING_CHECKOUT_ENABLED
-        value: "false"
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
       - key: WIRE_API_KEY
         sync: false
       - key: WIRE_WEBHOOK_SECRET

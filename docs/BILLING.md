@@ -50,8 +50,8 @@ Webhook алдагдсан тохиолдолд сервер 10 минут ту�
 | 1 | Merge → deploy. Migration `0005` эхлэхэд автоматаар ажиллана | зөвхөн шинэ хүснэгтүүд |
 | 2 | `python -m app.migrate current` → `0005` эсэхийг шалгах | – |
 | 3 | `BILLING_METERING=shadow`, 1 долоо хоног `usage_events`-ийг ажиглах (`decision=would_block` хэр олон гарч байгааг) | юуг ч хаахгүй |
-| 4 | Wire **test** түлхүүр + `BILLING_CHECKOUT_ENABLED=true` → test төлбөрөөр бүрэн урсгалыг шалгах | товч нээгдэнэ |
-| 5 | `sk_live_` түлхүүр, `BILLING_METERING=enforce` | жинхэнэ шилжилт |
+| 4 | Wire `sk_live_` түлхүүр (Wire-д test горим байхгүй) + `BILLING_CHECKOUT_ENABLED=true` → Starter-ээр өөрөө нэг удаа төлж шалгах | товч нээгдэнэ |
+| 5 | `BILLING_METERING=enforce` (shadow-ийн `usage_events`-ийг 1 долоо хоног харсны дараа) | жинхэнэ шилжилт |
 
 Одоо байгаа хэрэглэгч бүр автоматаар нэг удаагийн 30 үнэгүй минуттай байна. Grant мөр хэрэггүй, учир нь үлдэгдлийг `30 - хэрэглэсэн` гэж тооцдог.
 
@@ -65,3 +65,7 @@ Webhook алдагдсан тохиолдолд сервер 10 минут ту�
 `GET /api/billing/plans` (нээлттэй) · `GET /api/billing/me[?workspace_id]` · `POST /api/billing/checkout {plan_code, workspace_id?}` ·
 `GET /api/billing/orders[/{id}]` · `POST /api/billing/cancel` · `POST /api/billing/webhooks/wire` · `POST /api/contact-requests` (нээлттэй).
 Enterprise хүсэлт `contact_requests` хүснэгтэд хадгалагдана. И-мэйл мэдэгдэл явуулахын тулд mail provider болон хүлээн авах хаяг хэрэгтэй (одоогоор хийгээгүй).
+
+## Одоогийн төлөв (2026-11-16)
+Checkout нээлттэй (live Wire), нэг Starter төлбөр амжилттай. `BILLING_METERING=shadow` асаалттай — минут тоологдож байна,
+юуг ч хаахгүй. Дараагийн алхам: 1 долоо хоногийн дараа `usage_events`-ийг (`decision='would_block'`) харж `enforce`.

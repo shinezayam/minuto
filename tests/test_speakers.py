@@ -138,6 +138,7 @@ async def test_processing_labels_speakers_and_extracts_qa(client, tmp_path, qwen
     from app.services import processing
 
     monkeypatch.setattr(settings, "omni_chunk_sec", 10)
+    monkeypatch.setattr(settings, "asr_concurrency", 1)  # mock хариу дуудлагын дарааллаар оноогддог
     monkeypatch.setattr(asr_mod, "asr_provider", asr_mod.QwenOmniASRProvider())
     monkeypatch.setattr(llm_mod, "llm_provider", llm_mod.QwenLLMProvider())
     await client.patch("/api/auth/me", json={"name": "Болд"})
