@@ -12,7 +12,7 @@ imageio-ffmpeg==0.5.1
 SQLAlchemy==2.0.55
 alembic==1.16.5
 psycopg[binary]==3.2.13
-PyJWT==2.15.1
+PyJWT[crypto]==2.15.1
 # Optional: uncomment for local Whisper ASR (requires ~2GB torch)
 # openai-whisper
 # setuptools

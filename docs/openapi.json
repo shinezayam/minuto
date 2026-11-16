@@ -662,6 +662,21 @@
         "title": "Evidence",
         "type": "object"
       },
+      "GoogleAuthIn": {
+        "properties": {
+          "credential": {
+            "maxLength": 4096,
+            "minLength": 20,
+            "title": "Credential",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "title": "GoogleAuthIn",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1986,6 +2001,72 @@
         "summary": "Ask",
         "tags": [
           "ask"
+        ]
+      }
+    },
+    "/api/auth/google": {
+      "post": {
+        "description": "Google Identity Services-ийн ID token (credential)-оор нэвтрэх/бүртгүүлэх. Шинэ хэрэглэгч бол 201.",
+        "operationId": "google_sign_in_api_auth_google_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleAuthIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Google Sign In",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/google/config": {
+      "get": {
+        "description": "Frontend \"Google-ээр нэвтрэх\" товчийг харуулах эсэх (client ID нь нууц биш).",
+        "operationId": "google_config_api_auth_google_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Google Config Api Auth Google Config Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Google Config",
+        "tags": [
+          "auth"
         ]
       }
     },

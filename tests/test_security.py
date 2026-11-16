@@ -18,6 +18,8 @@ PUBLIC = {
     ("GET", "/api/health"),
     ("POST", "/api/auth/register"),
     ("POST", "/api/auth/login"),
+    ("GET", "/api/auth/google/config"),  # client ID нь нууц биш
+    ("POST", "/api/auth/google"),  # Google ID token-оор өөрөө баталгаажна
     ("GET", "/api/openapi.json"),
     ("GET", "/api/docs"),
     ("GET", "/api/redoc"),

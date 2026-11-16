@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     ws_ticket_ttl_sec: int = 60  # WebSocket-ийн нэг удаагийн тасалбар
     audio_url_ttl_sec: int = 900  # <audio>-д зориулсан гарын үсэгтэй линк (range хүсэлтүүд үргэлжилнэ)
     allow_registration: bool = True
+    # "Google-ээр нэвтрэх": Google Cloud → OAuth client (Web) ID. Нууц биш (frontend-д ч бий). Хоосон бол унтраалттай.
+    # Таслалаар хэд хэдэн client ID зөвшөөрч болно.
+    google_client_id: str = ""
 
     cors_origins: str = "http://localhost:3000"
     # "production" үед /api/docs унтарч, нууц (JWT_SECRET) шаардлагатай. Render дээр RENDER env автоматаар production гэж тооцогдоно.

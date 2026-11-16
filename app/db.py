@@ -40,6 +40,10 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     # Нэмэгдүүлснээр хуучин токенууд хүчингүй болно (revision 0002)
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # "Google-ээр нэвтрэх": Google-ийн тогтмол хэрэглэгчийн ID (sub). NULL = Google-ээр холбоогүй (revision 0007)
+    google_sub: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (Index("uq_users_google_sub", "google_sub", unique=True),)
 
 
 class Meeting(Base):

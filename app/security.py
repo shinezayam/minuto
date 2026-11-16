@@ -20,7 +20,7 @@ WINDOW_SEC = 60
 MAX_KEYS = 10_000  # санах ойг хязгаарлана: энэнээс олон IP/хэрэглэгч хадгалахгүй
 
 # Нэвтрээгүй хүн ч дуудаж болох, spam хийхэд эмзэг замууд: IP бүрт минутад rate_limit_auth_per_min
-_AUTH_PATHS = {"/api/auth/login", "/api/auth/register", "/api/contact-requests"}
+_AUTH_PATHS = {"/api/auth/login", "/api/auth/register", "/api/auth/google", "/api/contact-requests"}
 _EXPENSIVE = re.compile(
     r"^/api/(ask$|billing/checkout$|meetings/[^/]+/(process|regenerate-summary|upload|topics|transcript/replace)$)"
 )

@@ -154,6 +154,84 @@ def register(email: str, password: str, name: Optional[str] = None) -> UserRespo
         return _user_response(user)
 
 
+# ---------- Google-ээр нэвтрэх (Google Identity Services ID token) ----------
+
+GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
+GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+# Google-ээр үүссэн бүртгэлд нууц үг байхгүй: энэ тэмдэг нь хэзээ ч verify_password-д таарахгүй
+_NO_PASSWORD = "google$0$-$-"
+_jwk_client: Optional["jwt.PyJWKClient"] = None
+_jwk_lock = threading.Lock()
+
+
+class GoogleAuthError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code, self.message = code, message
+
+
+def google_client_ids() -> list[str]:
+    return [c.strip() for c in settings.google_client_id.split(",") if c.strip()]
+
+
+def _google_keys() -> "jwt.PyJWKClient":
+    global _jwk_client
+    with _jwk_lock:
+        if _jwk_client is None:
+            _jwk_client = jwt.PyJWKClient(GOOGLE_JWKS_URL, cache_keys=True, lifespan=3600, timeout=10)
+        return _jwk_client
+
+
+def verify_google_credential(credential: str) -> dict:
+    """Google-ийн ID token-ийг (RS256) Google-ийн нийтийн түлхүүрээр шалгана: гарын үсэг, aud (манай client ID), iss, exp,
+    email_verified. Амжилттай бол claims. Аливаа алдаа → GoogleAuthError."""
+    audiences = google_client_ids()
+    if not audiences:
+        raise GoogleAuthError("GOOGLE_DISABLED", "Google-ээр нэвтрэх тохируулагдаагүй байна")
+    try:
+        key = _google_keys().get_signing_key_from_jwt(credential).key
+        claims = jwt.decode(credential, key, algorithms=["RS256"], audience=audiences, issuer=GOOGLE_ISSUERS,
+                            options={"require": ["exp", "iat", "iss", "aud", "sub"]}, leeway=30)
+    except jwt.PyJWKClientError as e:
+        logger.warning("Google JWKS unavailable: %s", type(e).__name__)
+        raise GoogleAuthError("GOOGLE_UNAVAILABLE", "Google-тэй холбогдож чадсангүй. Дахин оролдоно уу.") from None
+    except jwt.InvalidTokenError as e:
+        logger.info("Google credential rejected: %s", type(e).__name__)
+        raise GoogleAuthError("GOOGLE_INVALID", "Google-ийн баталгаажуулалт хүчингүй байна. Дахин оролдоно уу.") from None
+    if not claims.get("email") or claims.get("email_verified") not in (True, "true"):
+        raise GoogleAuthError("GOOGLE_EMAIL_UNVERIFIED", "Google бүртгэлийн и-мэйл баталгаажаагүй байна")
+    return claims
+
+
+def google_sign_in(credential: str) -> tuple[UserResponse, bool]:
+    """Нэвтрэх эсвэл бүртгүүлэх. (хэрэглэгч, шинээр үүссэн эсэх).
+    Ижил и-мэйлтэй нууц үгтэй бүртгэл байвал Google нь и-мэйлийг баталгаажуулсан тул тэр бүртгэлд холбоно."""
+    claims = verify_google_credential(credential)
+    sub, email = str(claims["sub"]), str(claims["email"]).strip().lower()
+    name = (claims.get("name") or "").strip()[:100] or None
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.google_sub == sub))
+        if user is None:
+            user = s.scalar(select(User).where(User.email == email))
+            if user is not None:
+                if user.google_sub and user.google_sub != sub:
+                    raise GoogleAuthError("GOOGLE_ACCOUNT_MISMATCH", "Энэ и-мэйл өөр Google бүртгэлтэй холбогдсон байна")
+                user.google_sub = sub
+                if not user.name and name:
+                    user.name = name
+                logger.info("Linked Google sign-in to existing user %s", user.id)
+        created = False
+        if user is None:
+            if not settings.allow_registration:
+                raise GoogleAuthError("REGISTRATION_CLOSED", "Бүртгэл хаалттай байна")
+            user = User(email=email, password_hash=_NO_PASSWORD, name=name, google_sub=sub)
+            s.add(user)
+            s.flush()
+            created = True
+            logger.info("New user %s registered with Google", user.id)
+        return _user_response(user), created
+
+
 def authenticate(email: str, password: str) -> Optional[UserResponse]:
     with session_scope() as s:
         user = s.scalar(select(User).where(User.email == email.strip().lower()))

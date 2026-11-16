@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.models.schemas import AuthRequest, AuthResponse, UserResponse, UserUpdate
@@ -22,6 +23,31 @@ def login(body: AuthRequest) -> AuthResponse:
     user = auth.authenticate(body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS: Имэйл эсвэл нууц үг буруу байна")
+    return AuthResponse(token=auth.create_token(user.id), user=user)
+
+
+class GoogleAuthIn(BaseModel):
+    credential: str = Field(min_length=20, max_length=4096)
+
+
+@router.get("/google/config")
+def google_config() -> dict:
+    """Frontend "Google-ээр нэвтрэх" товчийг харуулах эсэх (client ID нь нууц биш)."""
+    ids = auth.google_client_ids()
+    return {"enabled": bool(ids), "client_id": ids[0] if ids else None}
+
+
+@router.post("/google", response_model=AuthResponse)
+def google_sign_in(body: GoogleAuthIn, response: Response) -> AuthResponse:
+    """Google Identity Services-ийн ID token (credential)-оор нэвтрэх/бүртгүүлэх. Шинэ хэрэглэгч бол 201."""
+    try:
+        user, created = auth.google_sign_in(body.credential)
+    except auth.GoogleAuthError as e:
+        status = {"GOOGLE_DISABLED": 404, "GOOGLE_UNAVAILABLE": 503, "REGISTRATION_CLOSED": 403,
+                  "GOOGLE_ACCOUNT_MISMATCH": 409}.get(e.code, 401)
+        raise HTTPException(status_code=status, detail=f"{e.code}: {e.message}") from None
+    if created:
+        response.status_code = 201
     return AuthResponse(token=auth.create_token(user.id), user=user)
 
 
