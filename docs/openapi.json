@@ -1476,10 +1476,22 @@
           "plan_code": {
             "enum": [
               "starter",
-              "pro"
+              "pro",
+              "team"
             ],
             "title": "Plan Code",
             "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
           }
         },
         "required": [

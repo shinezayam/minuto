@@ -575,5 +575,16 @@ async def test_sandbox_checkout_is_admin_only_and_activates_plan(anon_client, mo
     orders = (await anon_client.get("/api/billing/orders", headers=boss)).json()["orders"]
     assert orders[0]["sandbox"] is True
 
+    # Team: workspace-ийн эзэн/админ л, тухайн workspace-д идэвхжинэ
+    ws = (await anon_client.post("/api/workspaces", json={"name": "Баг", "workspace_type": "organization"}, headers=boss)).json()
+    other_ws = (await anon_client.post("/api/workspaces", json={"name": "Өөр", "workspace_type": "organization"}, headers=user)).json()
+    r = await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "team", "workspace_id": other_ws["id"]}, headers=boss)
+    assert r.status_code in (403, 404)
+    r = await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "team", "workspace_id": ws["id"]}, headers=boss)
+    assert r.status_code == 201 and r.json()["status"] == "paid" and r.json()["sandbox"] is True
+    wme = (await anon_client.get(f"/api/billing/me?workspace_id={ws['id']}", headers=boss)).json()
+    assert wme["plan"]["code"] == "team" and wme["subscription"]["status"] == "active"
+    assert (await anon_client.get("/api/billing/me", headers=boss)).json()["plan"]["code"] == "pro"
+
     monkeypatch.setattr(settings, "billing_sandbox", "off")
     assert (await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "starter"}, headers=boss)).status_code == 403
