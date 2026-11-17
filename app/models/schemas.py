@@ -122,6 +122,8 @@ class MeetingResponse(BaseModel):
     # "Анхаарах" гэж тэмдэглэсэн (жагсаалтын дээр гарна). pinned_at = тэмдэглэсэн цаг
     pinned: bool = False
     pinned_at: Optional[datetime] = None
+    # Хогийн саванд байгаа бол устгасан цаг
+    deleted_at: Optional[datetime] = None
 
 
 class MeetingListResponse(BaseModel):

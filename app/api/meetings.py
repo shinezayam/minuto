@@ -90,6 +90,28 @@ def list_meetings(
     return MeetingListResponse(meetings=meeting_store.list_meetings(user.id, include_archived=include_archived, workspace_id=workspace_id))
 
 
+# ---- Хогийн сав (төлбөртэй багц). /{meeting_id}-ээс өмнө бүртгэнэ ("trash" нь id биш)
+
+@router.get("/trash", response_model=MeetingListResponse)
+def list_trash(user: UserResponse = Depends(current_user)) -> MeetingListResponse:
+    return MeetingListResponse(meetings=meeting_store.list_trash(user.id))
+
+
+@router.delete("/trash", status_code=204, response_model=None)
+async def empty_trash(user: UserResponse = Depends(current_user)) -> None:
+    ids = meeting_store.empty_trash(user.id)
+    for mid in ids:
+        await asyncio.to_thread(audio_store.purge, mid)
+
+
+@router.post("/{meeting_id}/restore", response_model=MeetingResponse)
+def restore_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
+    meeting = meeting_store.restore_meeting(meeting_id, user.id)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return meeting
+
+
 @router.get("/{meeting_id}", response_model=MeetingResponse)
 def get_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> MeetingResponse:
     return _owned(meeting_id, user)
@@ -150,12 +172,16 @@ async def end_meeting(meeting_id: str, user: UserResponse = Depends(current_user
 
 
 @router.delete("/{meeting_id}", status_code=204, response_model=None)
-async def delete_meeting(meeting_id: str, user: UserResponse = Depends(current_user)) -> None:
-    if not meeting_store.delete_meeting(meeting_id, user.id):
+async def delete_meeting(meeting_id: str, permanent: bool = Query(False),
+                         user: UserResponse = Depends(current_user)) -> None:
+    """Төлбөртэй багцад эхлээд хогийн сав руу (аудио хадгалагдана); хогийн савнаас / permanent=true / Free бол бүрмөсөн."""
+    result = meeting_store.delete_meeting(meeting_id, user.id, permanent=permanent)
+    if result is None:
         raise HTTPException(status_code=404, detail="Meeting not found")
     await live_transcriber.stop(meeting_id)
-    # Хурлыг устгахад аудио бичлэг ч устна (remote амжилтгүй бол лог бичиж дараа дахин оролдоно)
-    await asyncio.to_thread(audio_store.purge, meeting_id)
+    if result == "deleted":
+        # Бүрмөсөн устгахад аудио бичлэг ч устна (remote амжилтгүй бол лог бичиж дараа дахин оролдоно)
+        await asyncio.to_thread(audio_store.purge, meeting_id)
 
 
 @router.post("/{meeting_id}/archive", response_model=MeetingResponse)

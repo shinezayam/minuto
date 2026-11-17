@@ -76,6 +76,8 @@ class Meeting(Base):
     archived: Mapped[bool] = mapped_column(Integer, default=0)
     # "Анхаарах" (яаралтай) гэж тэмдэглэсэн хугацаа; NULL = тэмдэглээгүй (revision 0006)
     pinned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Хогийн сав: устгасан цаг (төлбөртэй багцад). NULL = идэвхтэй. TRASH_RETENTION_DAYS-ийн дараа бүрмөсөн устна
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # Ашигласан загвар
     template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # Workspace болон Project холбоос

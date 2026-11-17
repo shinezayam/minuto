@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from sqlalchemy import and_, delete, or_, select, update
@@ -18,6 +18,11 @@ def _now() -> datetime:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _to_response(m: Meeting, role: Optional[str] = None, user_id: Optional[str] = None) -> MeetingResponse:
@@ -45,6 +50,7 @@ def _to_response(m: Meeting, role: Optional[str] = None, user_id: Optional[str] 
         pinned=m.pinned_at is not None,
         # SQLite timezone-гүй буцаадаг: үргэлж UTC болгож өгнө (frontend local цаг гэж уншихгүйн тулд)
         pinned_at=(m.pinned_at if m.pinned_at is None or m.pinned_at.tzinfo else m.pinned_at.replace(tzinfo=timezone.utc)),
+        deleted_at=(m.deleted_at if m.deleted_at is None or m.deleted_at.tzinfo else m.deleted_at.replace(tzinfo=timezone.utc)),
     )
 
 
@@ -52,11 +58,14 @@ def _resp(session, m: Meeting, user_id: Optional[str]) -> MeetingResponse:
     return _to_response(m, access.role_for(session, user_id, m) if user_id else None, user_id)
 
 
-def _get(session, meeting_id: str, user_id: Optional[str], action: str = "view") -> Optional[Meeting]:
-    """Хурлыг эрхийн дагуу авна. user_id=None бол шалгахгүй (дотоод дуудлага). Эрхгүй бол None (404), харж болох ч үйлдэл хийх эрхгүй бол AccessDenied (403)."""
+def _get(session, meeting_id: str, user_id: Optional[str], action: str = "view", include_deleted: bool = False) -> Optional[Meeting]:
+    """Хурлыг эрхийн дагуу авна. user_id=None бол шалгахгүй (дотоод дуудлага). Эрхгүй бол None (404), харж болох ч үйлдэл хийх эрхгүй бол AccessDenied (403).
+    Хогийн саванд байгаа хурал хэрэглэгчид "олдсонгүй" (include_deleted=True үед л — сэргээх, бүрмөсөн устгах)."""
     m = session.get(Meeting, meeting_id)
     if m is None or user_id is None:
         return m
+    if m.deleted_at is not None and not include_deleted:
+        return None
     verdict = access.decide(session, user_id, m, action)
     if verdict == "none":
         return None  # бусдын хурлыг "олдсонгүй" гэж хариулна
@@ -161,6 +170,7 @@ def list_meetings(owner_id: str, include_archived: bool = False, workspace_id: O
             )
         if not include_archived:
             query = query.where(Meeting.archived == 0)
+        query = query.where(Meeting.deleted_at.is_(None))
         # "Анхаарах" хурлууд эхэнд (сүүлд тэмдэглэсэн нь дээр), дараа нь шинээс хуучин руу
         rows = s.scalars(query.order_by(Meeting.pinned_at.is_(None), Meeting.pinned_at.desc(), Meeting.created_at.desc())).all()
         roles = {ws: access.workspace_role(s, owner_id, ws) for ws in member_ws}
@@ -209,13 +219,84 @@ def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optio
         return _resp(s, m, owner_id)
 
 
-def delete_meeting(meeting_id: str, owner_id: str) -> bool:
+TRASH_RETENTION_DAYS = 30
+
+
+def _trash_enabled(session, m: Meeting) -> bool:
+    """Хогийн сав нь төлбөртэй багцад (хурлын хүрээний багц: хувийн эсвэл workspace). Free бол шууд устна."""
+    from app.services import billing
+
+    try:
+        scope_type, scope_id = billing.scope_for_meeting(session, m, _now())
+        return billing.balance(session, scope_type, scope_id).plan.kind == "paid"
+    except Exception:  # billing хүснэгт байхгүй гэх мэт — хуучин үйлдлээр (шууд устгана)
+        logger.exception("trash: plan lookup failed for meeting %s", m.id)
+        return False
+
+
+def delete_meeting(meeting_id: str, owner_id: str, permanent: bool = False) -> Optional[str]:
+    """None = олдсонгүй | "trashed" = хогийн сав руу зөөсөн | "deleted" = бүрмөсөн устгасан (аудиог дуудагч устгана).
+    Төлбөртэй багцад эхлээд хогийн сав руу; хогийн савнаас эсвэл permanent=True бол бүрмөсөн."""
     with session_scope() as s:
-        m = _get(s, meeting_id, owner_id, "delete")
+        m = _get(s, meeting_id, owner_id, "delete", include_deleted=True)
         if not m:
-            return False
+            return None
+        if m.deleted_at is None and not permanent and _trash_enabled(s, m):
+            m.deleted_at = _now()
+            m.pinned_at = None
+            m.updated_at = _now()
+            return "trashed"
         s.delete(m)
-        return True
+        return "deleted"
+
+
+def _trash_query(session, user_id: str):
+    member_ws = access.accessible_workspace_ids(session, user_id)
+    return select(Meeting).where(
+        Meeting.deleted_at.is_not(None),
+        or_(
+            and_(Meeting.workspace_id.is_(None), Meeting.owner_id == user_id),
+            Meeting.workspace_id.in_(member_ws) if member_ws else False,
+        ),
+    )
+
+
+def list_trash(user_id: str) -> list[MeetingResponse]:
+    """Хэрэглэгчийн устгах эрхтэй, хогийн саванд байгаа хурлууд (сүүлд устгасан нь эхэндээ)."""
+    with session_scope() as s:
+        rows = s.scalars(_trash_query(s, user_id).order_by(Meeting.deleted_at.desc())).all()
+        return [_resp(s, m, user_id) for m in rows if access.decide(s, user_id, m, "delete") == "ok"]
+
+
+def restore_meeting(meeting_id: str, user_id: str) -> Optional[MeetingResponse]:
+    with session_scope() as s:
+        m = _get(s, meeting_id, user_id, "delete", include_deleted=True)
+        if not m or m.deleted_at is None:
+            return None
+        m.deleted_at = None
+        m.updated_at = _now()
+        return _resp(s, m, user_id)
+
+
+def empty_trash(user_id: str) -> list[str]:
+    """Хогийн савыг хоослоно: устгасан хурлын id-ууд (аудиог дуудагч устгана)."""
+    with session_scope() as s:
+        rows = [m for m in s.scalars(_trash_query(s, user_id)).all() if access.decide(s, user_id, m, "delete") == "ok"]
+        ids = [m.id for m in rows]
+        for m in rows:
+            s.delete(m)
+        return ids
+
+
+def purge_expired_trash(days: int = TRASH_RETENTION_DAYS) -> list[str]:
+    """Хогийн саванд `days`-ээс удаан байсан хурлуудыг бүрмөсөн устгана (maintenance loop)."""
+    cutoff = _now() - timedelta(days=days)
+    with session_scope() as s:
+        rows = s.scalars(select(Meeting).where(Meeting.deleted_at.is_not(None), Meeting.deleted_at < cutoff).limit(200)).all()
+        ids = [m.id for m in rows]
+        for m in rows:
+            s.delete(m)
+        return ids
 
 
 # ---------- Бичлэгийн төлөв ----------
@@ -512,6 +593,7 @@ def list_meeting_contents(
                 Meeting.workspace_id.in_(member_ws) if member_ws else False,
             ),
             Meeting.transcript.is_not(None),
+            Meeting.deleted_at.is_(None),
         )
         if meeting_id is not None:
             q = q.where(Meeting.id == meeting_id)

@@ -1026,6 +1026,18 @@
             "title": "Created By Me",
             "type": "boolean"
           },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
           "duration_ms": {
             "default": 0,
             "title": "Duration Ms",
@@ -3121,8 +3133,42 @@
         ]
       }
     },
+    "/api/meetings/trash": {
+      "delete": {
+        "operationId": "empty_trash_api_meetings_trash_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Empty Trash",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "get": {
+        "operationId": "list_trash_api_meetings_trash_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Trash",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
     "/api/meetings/{meeting_id}": {
       "delete": {
+        "description": "Төлбөртэй багцад эхлээд хогийн сав руу (аудио хадгалагдана); хогийн савнаас / permanent=true / Free бол бүрмөсөн.",
         "operationId": "delete_meeting_api_meetings__meeting_id__delete",
         "parameters": [
           {
@@ -3132,6 +3178,16 @@
             "schema": {
               "title": "Meeting Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "permanent",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Permanent",
+              "type": "boolean"
             }
           }
         ],
@@ -3906,6 +3962,48 @@
           }
         },
         "summary": "Regenerate Summary",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/restore": {
+      "post": {
+        "operationId": "restore_meeting_api_meetings__meeting_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "title": "Meeting Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Meeting",
         "tags": [
           "meetings"
         ]

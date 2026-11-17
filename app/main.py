@@ -43,6 +43,14 @@ async def _billing_maintenance() -> None:
         except Exception:  # noqa: BLE001
             logger.exception("billing maintenance failed")
         try:
+            # Хогийн саванд 30 хоногоос удаан байсан хурлыг бүрмөсөн устгана (аудиог ч)
+            from app.services import audio_store
+
+            for mid in await asyncio.to_thread(meeting_store.purge_expired_trash):
+                await asyncio.to_thread(audio_store.purge, mid)
+        except Exception:  # noqa: BLE001
+            logger.exception("trash purge failed")
+        try:
             from app.services import audio_store
 
             if audio_store.enabled():  # local backend бол DB-д хандахгүй
