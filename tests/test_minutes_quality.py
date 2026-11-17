@@ -264,3 +264,16 @@ async def test_ask_context_loading_is_bounded(client: AsyncClient):
         meeting_store.update_meeting_transcript(mid, [{"id": "seg_1", "start_ms": 0, "end_ms": 1, "text": "x"}])
     assert len(meeting_store.list_meeting_contents(uid, limit=3)) == 3
     assert len(meeting_store.list_meeting_contents(uid)) == 5
+
+
+def test_pdf_official_format_helpers():
+    """Албан хэлбэр: огноо Улаанбаатарын цагаар (UTC+8), тооны нөхцөл зөв; бичвэр PDF-д орохгүй ч алдаа гаргахгүй."""
+    from app.services.export_pdf import _date_mn, _duration_mn, _genitive, _local_dt, generate_meeting_pdf
+
+    dt = _local_dt("2026-11-17T03:15:00")  # DB-ийн UTC
+    assert (dt.hour, dt.minute) == (11, 15)
+    assert _date_mn(dt) == "2026 оны 11 сарын 17-ны өдөр"
+    assert [_genitive(n) for n in (1, 4, 9, 11, 17, 20, 21)] == ["1-ний", "4-ний", "9-ний", "11-ний", "17-ны", "20-ны", "21-ний"]
+    assert _duration_mn(47 * 60000) == "47 минут" and _duration_mn(65 * 60000) == "1 цаг 5 минут"
+    empty = generate_meeting_pdf("y", "test", "2026-11-17T03:15:00", MeetingMinutes(title="test", summary=""), None, [])
+    assert empty[:5] == b"%PDF-"

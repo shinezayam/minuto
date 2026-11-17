@@ -671,8 +671,8 @@ def export_pdf(meeting_id: str, user: UserResponse = Depends(current_user)):
         title=meeting.title,
         created_at=str(meeting.created_at),
         minutes=MeetingMinutes(**{**minutes_data, "prepared_by": _prepared_by(user)}),
-        transcript=meeting_store.get_meeting_transcript(meeting_id),
         participants=meeting.participants,
+        duration_ms=meeting.duration_ms or 0,
     )
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
