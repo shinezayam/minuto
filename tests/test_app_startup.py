@@ -27,6 +27,7 @@ EXPECTED_204 = {
     ("DELETE", "/api/vocabulary/{term_id}"),
     ("DELETE", "/api/workspaces/{workspace_id}"),
     ("POST", "/api/workspaces/{workspace_id}/transfer"),
+    ("DELETE", "/api/admin/admins/{email}"),
 }
 
 

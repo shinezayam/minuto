@@ -459,8 +459,9 @@ def sandbox_allowed(email: Optional[str]) -> bool:
         return True
     if mode_ != "admin" or not email:
         return False
-    admins = {e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()}
-    return email.strip().lower() in admins
+    from app.services import admins
+
+    return admins.is_admin(email)
 
 
 def create_sandbox_order(user_id: str, email: str, plan_code: str) -> dict:

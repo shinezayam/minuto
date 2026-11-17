@@ -339,6 +339,16 @@ class ContactRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
+class AdminGrant(Base):
+    """Үндсэн админ (ADMIN_EMAILS) сайтаас нэмсэн админ (revision 0010). И-мэйлээр (жижиг үсгээр) таньна."""
+
+    __tablename__ = "admin_grants"
+
+    email: Mapped[str] = mapped_column(String(320), primary_key=True)
+    added_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AudioPurge(Base):
     """Remote (Supabase)-аас устгаж чадаагүй хурлын аудио: дахин оролдоно (revision 0008). FK-гүй: хурал аль хэдийн устсан."""
 

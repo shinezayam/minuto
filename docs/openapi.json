@@ -177,6 +177,21 @@
         "title": "ActionItemsUpdate",
         "type": "object"
       },
+      "AdminIn": {
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "AdminIn",
+        "type": "object"
+      },
       "AskCitation": {
         "properties": {
           "end_ms": {
@@ -2029,6 +2044,105 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/admin/admins": {
+      "get": {
+        "operationId": "list_admins_api_admin_admins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Admins Api Admin Admins Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Admins",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "add_admin_api_admin_admins_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Admin Api Admin Admins Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/admins/{email}": {
+      "delete": {
+        "operationId": "remove_admin_api_admin_admins__email__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "title": "Email",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/admin/contact-requests": {
       "get": {
         "operationId": "list_contact_requests_api_admin_contact_requests_get",
