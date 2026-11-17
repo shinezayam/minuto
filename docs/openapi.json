@@ -1444,6 +1444,23 @@
         "title": "RoleChange",
         "type": "object"
       },
+      "SandboxIn": {
+        "properties": {
+          "plan_code": {
+            "enum": [
+              "starter",
+              "pro"
+            ],
+            "title": "Plan Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_code"
+        ],
+        "title": "SandboxIn",
+        "type": "object"
+      },
       "SpeakerTurnIn": {
         "properties": {
           "speaker": {
@@ -2657,6 +2674,50 @@
           }
         },
         "summary": "Get Plans",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/api/billing/sandbox-checkout": {
+      "post": {
+        "description": "Туршилтын (мөнгөгүй) төлбөр — BILLING_SANDBOX-оор зөвшөөрөгдсөн хэрэглэгчид л.",
+        "operationId": "sandbox_checkout_api_billing_sandbox_checkout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sandbox Checkout Api Billing Sandbox Checkout Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sandbox Checkout",
         "tags": [
           "billing"
         ]

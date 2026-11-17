@@ -46,15 +46,31 @@ def get_plans() -> dict:
 def get_billing_me(workspace_id: Optional[str] = Query(default=None, max_length=36),
                    user: UserResponse = Depends(current_user)) -> dict:
     try:
-        return billing.summary(user.id, workspace_id)
+        out = billing.summary(user.id, workspace_id)
     except billing.BillingError as e:
         raise _http(e) from e
+    # Sandbox төлбөр нь хувийн багцад л (Starter/Pro)
+    out["sandbox_enabled"] = not workspace_id and billing.sandbox_allowed(user.email)
+    return out
 
 
 @router.post("/api/billing/checkout", status_code=201)
 async def checkout(body: CheckoutIn, user: UserResponse = Depends(current_user)) -> dict:
     try:
         return await asyncio.to_thread(billing.create_checkout, user.id, body.plan_code, body.workspace_id)
+    except billing.BillingError as e:
+        raise _http(e) from e
+
+
+class SandboxIn(BaseModel):
+    plan_code: Literal["starter", "pro"]
+
+
+@router.post("/api/billing/sandbox-checkout", status_code=201)
+def sandbox_checkout(body: SandboxIn, user: UserResponse = Depends(current_user)) -> dict:
+    """Туршилтын (мөнгөгүй) төлбөр — BILLING_SANDBOX-оор зөвшөөрөгдсөн хэрэглэгчид л."""
+    try:
+        return billing.create_sandbox_order(user.id, user.email, body.plan_code)
     except billing.BillingError as e:
         raise _http(e) from e
 

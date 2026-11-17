@@ -548,3 +548,32 @@ def test_unknown_duration_event_is_remeasured_on_reprocess(monkeypatch, duration
 
     billing.reserve(mid, uid)  # дахин: мэдэгдэж буй урттай тул нэмж хасахгүй
     assert len(events(mid)) == 2
+
+
+# ---------------------------------------------------------------- sandbox
+
+
+async def test_sandbox_checkout_is_admin_only_and_activates_plan(anon_client, monkeypatch):
+    from app.config import settings
+    from tests.conftest import register
+
+    monkeypatch.setattr(settings, "admin_emails", "boss@minuto.mn")
+    monkeypatch.setattr(settings, "billing_sandbox", "admin")
+    boss = {"Authorization": f"Bearer {(await register(anon_client, 'boss@minuto.mn'))['token']}"}
+    user = {"Authorization": f"Bearer {(await register(anon_client, 'joe@minuto.mn'))['token']}"}
+
+    assert (await anon_client.get("/api/billing/me", headers=user)).json()["sandbox_enabled"] is False
+    assert (await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "pro"}, headers=user)).status_code == 403
+    assert (await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "pro"})).status_code == 401
+    assert (await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "team"}, headers=boss)).status_code == 422
+
+    assert (await anon_client.get("/api/billing/me", headers=boss)).json()["sandbox_enabled"] is True
+    r = await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "pro"}, headers=boss)
+    assert r.status_code == 201 and r.json()["status"] == "paid" and r.json()["sandbox"] is True
+    me = (await anon_client.get("/api/billing/me", headers=boss)).json()
+    assert me["plan"]["code"] == "pro" and me["subscription"]["status"] == "active"
+    orders = (await anon_client.get("/api/billing/orders", headers=boss)).json()["orders"]
+    assert orders[0]["sandbox"] is True
+
+    monkeypatch.setattr(settings, "billing_sandbox", "off")
+    assert (await anon_client.post("/api/billing/sandbox-checkout", json={"plan_code": "starter"}, headers=boss)).status_code == 403
