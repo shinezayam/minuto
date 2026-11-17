@@ -62,6 +62,8 @@ class ActionItemsUpdate(BaseModel):
 class MeetingUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200)
     participants: Optional[List[ParticipantName]] = Field(default=None, max_length=50)
+    # Хөтлөгчийн гар тэмдэглэл (HTML: b/i/u/жагсаалт). "" = устгах
+    notes: Optional[str] = Field(default=None, max_length=100_000)
 
 
 class TranscriptReplace(BaseModel):
@@ -124,6 +126,8 @@ class MeetingResponse(BaseModel):
     pinned_at: Optional[datetime] = None
     # Хогийн саванд байгаа бол устгасан цаг
     deleted_at: Optional[datetime] = None
+    # Хөтлөгчийн гар тэмдэглэл (цэвэрлэсэн HTML)
+    notes: Optional[str] = None
 
 
 class MeetingListResponse(BaseModel):

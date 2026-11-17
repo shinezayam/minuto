@@ -1074,6 +1074,17 @@
             ],
             "title": "My Role"
           },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
           "participants": {
             "items": {
               "type": "string"
@@ -1213,6 +1224,18 @@
       },
       "MeetingUpdate": {
         "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 100000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
           "participants": {
             "anyOf": [
               {

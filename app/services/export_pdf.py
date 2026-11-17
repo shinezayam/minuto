@@ -134,6 +134,7 @@ def generate_meeting_pdf(
     transcript: Optional[List[dict]] = None,  # noqa: ARG001 — PDF-д бичвэр орохгүй (зөвхөн DOCX)
     participants: Optional[List[str]] = None,
     duration_ms: int = 0,
+    notes: Optional[str] = None,
 ) -> bytes:
     """Хурлын тэмдэглэлийг албан бичгийн A4 хэлбэрээр PDF болгоно."""
     pdf = MeetingPDF()
@@ -196,6 +197,16 @@ def generate_meeting_pdf(
     # Дүгнэлт, шийдвэр
     approved = status_line(minutes)[1]
     confirmed, other = split_decisions(minutes)
+    # Хөтлөгчийн гар тэмдэглэл (хүн бичсэн)
+    if notes and notes.strip():
+        _heading(pdf, "ХӨТЛӨГЧИЙН ТЭМДЭГЛЭЛ:")
+        pdf.set_font("DejaVu", "", BODY)
+        for line in notes.splitlines():
+            stripped = line.lstrip()
+            depth = (len(line) - len(stripped)) // 2
+            pdf.set_x(MARGIN_LEFT + INDENT + depth * 6)
+            pdf.multi_cell(0, LINE, stripped, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
     _heading(pdf, "ХУРЛЫН ДҮГНЭЛТ, ШИЙДВЭР:")
     if confirmed:
         pdf.set_font("DejaVu", "", BODY)

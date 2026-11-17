@@ -641,6 +641,7 @@ def export_docx(meeting_id: str, user: UserResponse = Depends(current_user)):
         raise HTTPException(status_code=404, detail="Minutes not generated yet")
 
     from app.services.export_docx import generate_meeting_docx
+    from app.services.notes import notes_to_text
 
     docx_bytes = generate_meeting_docx(
         meeting_id=meeting_id,
@@ -649,6 +650,7 @@ def export_docx(meeting_id: str, user: UserResponse = Depends(current_user)):
         minutes=MeetingMinutes(**{**minutes_data, "prepared_by": _prepared_by(user)}),
         transcript=meeting_store.get_meeting_transcript(meeting_id),
         participants=meeting.participants,
+        notes=notes_to_text(meeting.notes),
     )
     return StreamingResponse(
         io.BytesIO(docx_bytes),
@@ -665,6 +667,7 @@ def export_pdf(meeting_id: str, user: UserResponse = Depends(current_user)):
         raise HTTPException(status_code=404, detail="Minutes not generated yet")
 
     from app.services.export_pdf import generate_meeting_pdf
+    from app.services.notes import notes_to_text
 
     pdf_bytes = generate_meeting_pdf(
         meeting_id=meeting_id,
@@ -673,6 +676,7 @@ def export_pdf(meeting_id: str, user: UserResponse = Depends(current_user)):
         minutes=MeetingMinutes(**{**minutes_data, "prepared_by": _prepared_by(user)}),
         participants=meeting.participants,
         duration_ms=meeting.duration_ms or 0,
+        notes=notes_to_text(meeting.notes),
     )
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

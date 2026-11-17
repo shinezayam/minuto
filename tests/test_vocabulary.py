@@ -105,7 +105,7 @@ async def test_processing_uses_vocabulary(client: AsyncClient, monkeypatch, tmp_
             return [TranscriptSegment(id="s1", start_ms=0, end_ms=1000, text="Бат тайлан өгнө.")]
 
     class FakeLLM:
-        async def generate_minutes(self, transcript, participants=None, template=None, language="mn"):
+        async def generate_minutes(self, transcript, participants=None, template=None, language="mn", notes=None):
             seen["llm_text"] = transcript[0].text
             return MeetingMinutes(title="Т", summary="С")
 

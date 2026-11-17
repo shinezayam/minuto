@@ -20,6 +20,7 @@ def generate_meeting_docx(
     minutes: MeetingMinutes,
     transcript: Optional[List[dict]] = None,
     participants: Optional[List[str]] = None,
+    notes: Optional[str] = None,
 ) -> bytes:
     """Generate a DOCX file from meeting minutes."""
     doc = Document()
@@ -84,6 +85,12 @@ def generate_meeting_docx(
     # Summary
     doc.add_heading("Товч агуулга", level=1)
     doc.add_paragraph(minutes.summary)
+
+    # Хөтлөгчийн гар тэмдэглэл (хүн бичсэн)
+    if notes and notes.strip():
+        doc.add_heading("Хөтлөгчийн тэмдэглэл", level=1)
+        for line in notes.splitlines():
+            doc.add_paragraph(line)
 
     # Topics
     if minutes.topics:

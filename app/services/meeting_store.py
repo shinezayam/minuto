@@ -22,6 +22,8 @@ def _now_ms() -> int:
 
 import logging
 
+from app.services.notes import notes_to_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +53,7 @@ def _to_response(m: Meeting, role: Optional[str] = None, user_id: Optional[str] 
         # SQLite timezone-гүй буцаадаг: үргэлж UTC болгож өгнө (frontend local цаг гэж уншихгүйн тулд)
         pinned_at=(m.pinned_at if m.pinned_at is None or m.pinned_at.tzinfo else m.pinned_at.replace(tzinfo=timezone.utc)),
         deleted_at=(m.deleted_at if m.deleted_at is None or m.deleted_at.tzinfo else m.deleted_at.replace(tzinfo=timezone.utc)),
+        notes=m.notes,
     )
 
 
@@ -215,6 +218,10 @@ def update_meeting(meeting_id: str, owner_id: str, data: MeetingUpdate) -> Optio
         if data.participants is not None:
             m.participants = _dedupe(data.participants)
             _remember_contacts(s, owner_id, m.participants)
+        if data.notes is not None:
+            from app.services.notes import sanitize_notes_html
+
+            m.notes = sanitize_notes_html(data.notes)
         m.updated_at = _now()
         return _resp(s, m, owner_id)
 
@@ -645,13 +652,14 @@ def get_meeting_context(meeting_id: str) -> dict:
     with session_scope() as s:
         m = s.get(Meeting, meeting_id)
         if not m:
-            return {"participants": [], "owner_name": None, "template": None, "language": "mn"}
+            return {"participants": [], "owner_name": None, "template": None, "language": "mn", "notes": ""}
         owner = s.get(User, m.owner_id)
         tmpl = s.get(MeetingTemplate, m.template_id) if m.template_id else None
         return {
             "participants": list(m.participants or []),
             "owner_name": owner_display_name(owner),
             "language": m.language or "mn",
+            "notes": notes_to_text(m.notes),
             "template": (
                 {"name": tmpl.name, "sections": list(tmpl.sections or []), "custom_prompt": tmpl.custom_prompt}
                 if tmpl

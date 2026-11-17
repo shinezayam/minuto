@@ -78,6 +78,8 @@ class Meeting(Base):
     pinned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Хогийн сав: устгасан цаг (төлбөртэй багцад). NULL = идэвхтэй. TRASH_RETENTION_DAYS-ийн дараа бүрмөсөн устна
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # Хөтлөгчийн гар тэмдэглэл (хурал явах үед хүн бичнэ). services/notes.py-оор цэвэрлэсэн HTML
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Ашигласан загвар
     template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # Workspace болон Project холбоос
