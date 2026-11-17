@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi.routing import APIRoute
 
 from app.main import app
+from tests.routes_util import iter_routes
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -31,7 +32,7 @@ EXPECTED_204 = {
 
 def _routes_204() -> set[tuple[str, str]]:
     found = set()
-    for r in app.routes:
+    for r in iter_routes(app):
         if isinstance(r, APIRoute) and r.status_code == 204:
             for method in r.methods:
                 found.add((method, r.path))
@@ -56,7 +57,7 @@ def test_all_expected_204_routes_registered():
 
 
 def test_no_unexpected_204_route_without_response_model_none():
-    for r in app.routes:
+    for r in iter_routes(app):
         if isinstance(r, APIRoute) and r.status_code == 204:
             assert r.response_model is None, f"{r.path} would crash on startup"
 

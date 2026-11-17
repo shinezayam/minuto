@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
 from app.main import app
+from tests.routes_util import iter_routes
 from app.security import SlidingWindow, client_ip, ws_origin_allowed
 from app.services.auth import current_user
 
@@ -41,7 +42,7 @@ def _has_auth(route: APIRoute) -> bool:
 
 def test_every_http_route_requires_auth_or_is_listed_public():
     unprotected = []
-    for r in app.routes:
+    for r in iter_routes(app):
         if not hasattr(r, "methods"):
             continue
         for m in r.methods - {"HEAD", "OPTIONS"}:
@@ -53,7 +54,7 @@ def test_every_http_route_requires_auth_or_is_listed_public():
 
 
 def test_websocket_routes_are_known():
-    ws = {r.path for r in app.routes if r.__class__.__name__ == "APIWebSocketRoute"}
+    ws = {r.path for r in iter_routes(app) if r.__class__.__name__ == "APIWebSocketRoute"}
     assert ws <= SELF_AUTH_WS, f"Шинэ WebSocket route: {ws - SELF_AUTH_WS}"
 
 
