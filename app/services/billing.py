@@ -657,3 +657,28 @@ def create_contact_request(name: str, email: str, message: str, company: Optiona
         s.flush()
         logger.info("enterprise contact request %s received", req.id)
         return req.id
+
+
+FEEDBACK_DAILY_LIMIT = 20
+
+
+def create_feedback(user_id: str, name: str, email: str, category: str, message: str) -> str:
+    """Тохиргооноос ирсэн санал хүсэлт. Админы "Хүсэлтүүд" хуудсанд kind=feedback-ээр харагдана."""
+    message = message.strip()
+    if len(message) < 3:
+        raise BillingError("INVALID_INPUT", 422, "Санал хүсэлтээ бичнэ үү")
+    since = _now() - timedelta(days=1)
+    with session_scope() as s:
+        recent = s.scalar(
+            select(func.count()).select_from(ContactRequest).where(
+                ContactRequest.kind == "feedback", ContactRequest.user_id == user_id, ContactRequest.created_at >= since
+            )
+        )
+        if (recent or 0) >= FEEDBACK_DAILY_LIMIT:
+            raise BillingError("TOO_MANY_FEEDBACK", 429, "Өнөөдөр хэт олон санал илгээсэн байна. Маргааш дахин оролдоно уу")
+        req = ContactRequest(name=(name.strip() or email)[:100], email=email[:320], message=message[:5000],
+                             user_id=user_id, status="new", kind="feedback", category=category, created_at=_now())
+        s.add(req)
+        s.flush()
+        logger.info("feedback %s (%s) received", req.id, category)
+        return req.id

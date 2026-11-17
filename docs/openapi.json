@@ -662,6 +662,31 @@
         "title": "Evidence",
         "type": "object"
       },
+      "FeedbackIn": {
+        "properties": {
+          "category": {
+            "default": "idea",
+            "enum": [
+              "idea",
+              "bug",
+              "other"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "FeedbackIn",
+        "type": "object"
+      },
       "GoogleAuthIn": {
         "properties": {
           "credential": {
@@ -2011,6 +2036,21 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "enterprise",
+              "enum": [
+                "enterprise",
+                "feedback",
+                "all"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2742,6 +2782,49 @@
         "summary": "Delete Contact",
         "tags": [
           "contacts"
+        ]
+      }
+    },
+    "/api/feedback": {
+      "post": {
+        "operationId": "feedback_api_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Feedback Api Feedback Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Feedback",
+        "tags": [
+          "billing"
         ]
       }
     },

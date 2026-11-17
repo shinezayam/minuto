@@ -15,6 +15,7 @@ from app.services.auth import current_user
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 Status = Literal["new", "contacted", "closed"]
+Kind = Literal["enterprise", "feedback", "all"]
 
 
 def is_admin(user: UserResponse) -> bool:
@@ -35,7 +36,8 @@ class StatusIn(BaseModel):
 def _dict(r: ContactRequest) -> dict:
     created = r.created_at
     return {"id": r.id, "name": r.name, "email": r.email, "company": r.company, "phone": r.phone,
-            "message": r.message, "status": r.status, "created_at": created.isoformat() if created else None}
+            "message": r.message, "status": r.status, "kind": r.kind or "enterprise", "category": r.category,
+            "created_at": created.isoformat() if created else None}
 
 
 @router.get("/me")
@@ -44,9 +46,12 @@ def admin_me(user: UserResponse = Depends(current_user)) -> dict:
 
 
 @router.get("/contact-requests")
-def list_contact_requests(status: Optional[Status] = Query(default=None), _: UserResponse = Depends(require_admin)) -> dict:
+def list_contact_requests(status: Optional[Status] = Query(default=None), kind: Kind = Query(default="enterprise"),
+                          _: UserResponse = Depends(require_admin)) -> dict:
     with session_scope() as s:
         q = select(ContactRequest).order_by(ContactRequest.created_at.desc()).limit(200)
+        if kind != "all":
+            q = q.where(ContactRequest.kind == kind)
         if status:
             q = q.where(ContactRequest.status == status)
         return {"requests": [_dict(r) for r in s.scalars(q).all()]}

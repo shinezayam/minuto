@@ -332,6 +332,10 @@ class ContactRequest(Base):
     message: Mapped[str] = mapped_column(Text)
     user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="new")
+    # "enterprise" = үнийн санал авах хүсэлт | "feedback" = Тохиргооноос ирсэн санал хүсэлт
+    kind: Mapped[str] = mapped_column(String(16), default="enterprise", server_default="enterprise", index=True)
+    # feedback-ийн ангилал: idea | bug | other
+    category: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 

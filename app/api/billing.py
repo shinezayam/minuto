@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -95,6 +95,20 @@ async def wire_webhook(request: Request) -> dict:
     except billing.BillingError as e:
         raise _http(e) from e
     return {"received": True, "status": status}
+
+
+class FeedbackIn(BaseModel):
+    category: Literal["idea", "bug", "other"] = "idea"
+    message: str = Field(min_length=1, max_length=5000)
+
+
+@router.post("/api/feedback", status_code=201)
+def feedback(body: FeedbackIn, user: UserResponse = Depends(current_user)) -> dict:
+    try:
+        rid = billing.create_feedback(user.id, user.name or "", user.email, body.category, body.message)
+    except billing.BillingError as e:
+        raise _http(e) from e
+    return {"id": rid}
 
 
 @router.post("/api/contact-requests", status_code=201)
