@@ -31,7 +31,7 @@ from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
 from app.services import audio_store, billing, jobs, minutes_review, transcript_edit
 from app.services import upload_guard as guard
-from app.services.audio_utils import find_meeting_audio, probe_audio_error
+from app.services.audio_utils import analyze_audio_quality, find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
 from app.services.auth import current_user
 
@@ -305,11 +305,15 @@ async def upload_audio(
         filepath.unlink(missing_ok=True)
         raise HTTPException(status_code=503, detail="STORAGE_UNAVAILABLE: Аудиог хадгалж чадсангүй. Түр хүлээгээд дахин оролдоно уу.")
 
+    # Чанар муу бол frontend боловсруулалт эхлэхээс өмнө (минут зарцуулахаас өмнө) анхааруулна
+    audio_issue = await asyncio.to_thread(analyze_audio_quality, filepath)
+
     return {
         "meeting_id": meeting_id,
         "filename": filepath.name,
         "size_bytes": filepath.stat().st_size,
         "status": "uploaded",
+        "audio_issue": audio_issue,
     }
 
 

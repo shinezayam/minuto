@@ -82,6 +82,76 @@ def probe_audio_error(path: Path) -> Optional[str]:
     return None
 
 
+# ---------- Дууны чанар (upload хийсэн файл) ----------
+# Frontend-ийн шууд бичлэгийн хяналттай (minuto-frontend/src/lib/audio-quality.ts) ижил босго
+QUALITY_SILENT_DB = -55.0   # хамгийн чанга хэсэг (p95) үүнээс доош → дуу сонсогдохгүй
+QUALITY_QUIET_DB = -42.0    # p95 үүнээс доош → яриа хэт сул
+QUALITY_CLIP_FRAMES = 0.02  # оргил нь 0 dBFS-д хүрсэн frame-ийн хувь → хагарч байна
+QUALITY_NOISE_FLOOR_DB = -45.0
+QUALITY_NOISE_RANGE_DB = 8.0
+QUALITY_ANALYZE_SEC = 600   # эхний 10 минутыг шинжилнэ (урт файлд upload удаашрахгүй)
+
+_ASTATS_RE = re.compile(r"lavfi\.astats\.Overall\.(RMS|Peak)_level=(\S+)")
+
+
+def _db(value: str) -> float:
+    try:
+        return max(-100.0, float(value))
+    except ValueError:  # "-inf" (бүрэн чимээгүй)
+        return -100.0
+
+
+def classify_audio_levels(rms_db: List[float], peak_db: List[float]) -> Optional[str]:
+    """100ms frame-үүдийн түвшингээс асуудал: "silent" | "clipping" | "quiet" | "noisy" | None (хэвийн)."""
+    if not rms_db:
+        return None
+    dbs = sorted(rms_db)
+
+    def pct(p: float) -> float:
+        return dbs[min(len(dbs) - 1, max(0, round((len(dbs) - 1) * p)))]
+
+    loud, floor = pct(0.95), pct(0.10)
+    clip = sum(1 for p in peak_db if p >= -0.1) / max(1, len(peak_db))
+    if loud < QUALITY_SILENT_DB:
+        return "silent"
+    if clip > QUALITY_CLIP_FRAMES:
+        return "clipping"
+    if loud < QUALITY_QUIET_DB:
+        return "quiet"
+    if floor > QUALITY_NOISE_FLOOR_DB and loud - floor < QUALITY_NOISE_RANGE_DB:
+        return "noisy"
+    return None
+
+
+def analyze_audio_quality(path: Path) -> Optional[str]:
+    """Файлын дууны чанарыг ffmpeg astats-аар (100ms frame) шинжилнэ. Шинжилж чадахгүй бол None —
+    энэ нь зөвхөн анхааруулга тул upload-ыг хэзээ ч саатуулахгүй."""
+    try:
+        exe = ffmpeg_exe()
+    except RuntimeError:
+        return None
+    graph = (
+        "aformat=channel_layouts=mono,aresample=8000,asetnsamples=n=800:p=0,"
+        "astats=metadata=1:reset=1,"
+        "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level,"
+        "ametadata=mode=print:key=lavfi.astats.Overall.Peak_level"
+    )
+    try:
+        proc = subprocess.run(
+            [exe, "-hide_banner", "-nostats", "-nostdin", "-loglevel", "info", "-t", str(QUALITY_ANALYZE_SEC),
+             "-i", str(path), "-vn", "-af", graph, "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("audio quality analysis failed: %s", e)
+        return None
+    rms: List[float] = []
+    peak: List[float] = []
+    for kind, value in _ASTATS_RE.findall(proc.stderr):
+        (rms if kind == "RMS" else peak).append(_db(value))
+    return classify_audio_levels(rms, peak)
+
+
 def _split_sync(src: Path, out_dir: Path, chunk_sec: int, sample_rate: int) -> List[Path]:
     if out_dir.exists():
         shutil.rmtree(out_dir)
