@@ -98,3 +98,16 @@ def test_database_url_normalization():
     assert normalize_url("postgres://u:p@h:5432/d") == "postgresql+psycopg://u:p@h:5432/d"
     assert normalize_url("postgresql://u:p@h/d") == "postgresql+psycopg://u:p@h/d"
     assert normalize_url("sqlite:///./x.db") == "sqlite:///./x.db"
+
+
+async def test_register_without_name_uses_email(anon_client):
+    r = await anon_client.post("/api/auth/register", json={"email": "bat.bold92+work@gmail.com", "password": "password123"})
+    assert r.status_code == 201 and r.json()["user"]["name"] == "Bat Bold"
+    r = await anon_client.post("/api/auth/register", json={"email": "x@test.mn", "password": "password123", "name": " Б. Болд "})
+    assert r.json()["user"]["name"] == "Б. Болд"
+
+
+def test_name_from_email():
+    from app.services.auth import name_from_email
+    assert name_from_email("bat_erdene-01@gmail.com") == "Bat Erdene"
+    assert name_from_email("12345@gmail.com") is None

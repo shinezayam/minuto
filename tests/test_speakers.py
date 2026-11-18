@@ -211,6 +211,10 @@ async def test_prepared_by_falls_back_to_email(client):
     me = (await client.get("/api/auth/me")).json()
     from app.services import meeting_store
 
+    # Бүртгэлд нэр имэйлээс автоматаар бөглөгддөг; нэргүй (хуучин) хэрэглэгчийг дуурайна
+    with db.session_scope() as s:
+        s.get(db.User, me["id"]).name = None
+
     mid = (await client.post("/api/meetings", json={})).json()["id"]
     meeting_store.update_meeting_minutes(mid, {"title": "t", "summary": "s"})
     minutes = (await client.get(f"/api/meetings/{mid}/minutes")).json()

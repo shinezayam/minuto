@@ -143,12 +143,20 @@ def _user_response(user: User) -> UserResponse:
     return UserResponse(id=user.id, email=user.email, name=user.name)
 
 
+def name_from_email(email: str) -> Optional[str]:
+    """Имэйлийн @-ийн өмнөх хэсгээс нэр гаргана: "bat.bold92+work@gmail.com" → "Bat Bold"."""
+    local = email.split("@", 1)[0].split("+", 1)[0]
+    words = [w for w in re.split(r"[._\-\s\d]+", local) if w]
+    return " ".join(w[:1].upper() + w[1:].lower() for w in words)[:100] or None
+
+
 def register(email: str, password: str, name: Optional[str] = None) -> UserResponse:
     email = email.strip().lower()
+    name = (name or "").strip() or name_from_email(email)
     with session_scope() as s:
         if s.scalar(select(User).where(User.email == email)):
             raise HTTPException(status_code=409, detail="EMAIL_TAKEN: Энэ имэйлээр бүртгэл үүссэн байна")
-        user = User(email=email, password_hash=hash_password(password), name=(name or "").strip() or None)
+        user = User(email=email, password_hash=hash_password(password), name=name)
         s.add(user)
         s.flush()
         return _user_response(user)
