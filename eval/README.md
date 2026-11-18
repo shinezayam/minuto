@@ -26,3 +26,11 @@ so the guard cannot hide a regression in the model.
 * Adding a real case: copy a fixture, replace `transcript` (segments with ids) and `gold`, keep personal data out
   (names → "Бат", "Сараа"), set `"synthetic": false` only for genuinely recorded meetings you have permission to use.
 * `tests/test_eval_harness.py` checks the scorer itself on canned "good" and "bad" model outputs (no API calls).
+
+## Comparing models
+`python -m eval.compare_models <fixtures_dir> qwen3.7-plus,qwen3.8-max 2 <out_dir>` (PAID) runs every case with each
+model, prints rubric averages, latency and tokens, and saves each model's outputs for side-by-side reading.
+`fixtures_models/` holds harder synthetic cases (proposal vs decision, a reversed decision, garbled speech, a client
+who hedges). 2026-11-18 run (6 cases × 2): qwen3.8-max had higher decision precision (0.50 vs 0.28) and fewer
+hallucinations (1.5 vs 1.8), ~12% slower; manual reading also favoured max (open questions, implicit tasks,
+hedging kept as undecided). Synthetic and short — re-check on real meetings.

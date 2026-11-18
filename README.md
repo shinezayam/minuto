@@ -50,7 +50,7 @@ Choose between Qwen (real) or Mock (demo):
 LLM_PROVIDER=qwen   # or 'mock'
 QWEN_API_KEY=your_key_here
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_MODEL=qwen-plus
+QWEN_MODEL=qwen3.8-max
 ```
 
 Get your Qwen API key from: https://dashscope.console.aliyun.com/

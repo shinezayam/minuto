@@ -22,7 +22,7 @@ services:
       - key: QWEN_BASE_URL
         value: https://tokenhub.mn/v1
       - key: QWEN_MODEL
-        value: qwen3.7-plus
+        value: qwen3.8-max
       - key: OMNI_MODEL
         value: qwen3.8-omni-flash
       # Нууц — Render dashboard дээр гараар оруулна, git-д бичихгүй
