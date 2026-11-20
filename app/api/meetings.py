@@ -279,6 +279,7 @@ async def upload_audio(
             old.unlink()
     filepath = meeting_dir / f"uploaded{ext}"
     part.replace(filepath)
+    live_transcriber.discard_windows(meeting_dir)  # шууд бичвэр шинэ файлд хамаарахгүй
 
     # Гэмтсэн/дутуу файлыг Process хүртэл хүлээлгүй, upload дээр нь шууд буцаана
     probe_error = await asyncio.to_thread(probe_audio_error, filepath)

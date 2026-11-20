@@ -19,6 +19,7 @@ from app.services.asr import ProviderError
 from app.services import audio_store, jobs
 from app.services.audio_utils import find_meeting_audio
 from app.services.speakers import apply_speaker_map
+from app.services.live_transcriber import load_windows
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +44,17 @@ async def run(meeting_id: str, job=None) -> bool:
 
         meeting_store.set_progress(meeting_id, "transcribing", 0, 0)
         vocab = await asyncio.to_thread(vocabulary.for_meeting, meeting_id)
+        # Шууд бичлэгийн үеэр гарсан бичвэр: дахин ASR-д явуулахгүй, зөвхөн дутуу хэсгийг нөхнө
+        prefilled = await asyncio.to_thread(load_windows, meeting_dir(meeting_id))
+        if prefilled:
+            logger.info("Meeting %s: reusing %d live windows", meeting_id, len(prefilled))
         transcript = await asr_mod.asr_provider.transcribe(
             str(audio),
             on_progress=lambda done, total: meeting_store.set_progress(meeting_id, "transcribing", done, total),
             context=asr_mod.ASRContext(
                 hints=vocab.hints, topic=vocab.topic,
                 resume=dict(job.chunks) if job else {}, on_chunk=job.save_chunk if job else None,
+                prefilled=prefilled,
             ),
         )
         transcript = apply_speaker_map(transcript, {})

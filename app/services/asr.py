@@ -37,9 +37,37 @@ class ASRContext:
     resume: dict = field(default_factory=dict)
     # Хэсэг бүр дуусах бүрд дуудагдана (durable job DB-д хадгална)
     on_chunk: Optional[Callable[[int, dict], None]] = None
+    # Хурлын үеэр аль хэдийн текст болгосон цонхнууд [{"start_ms","end_ms","text"}]. Эдгээрийг дахин ASR-д
+    # явуулахгүй, зөвхөн хамрагдаагүй завсрыг (алдаа гарсан цонх, сүүлийн хэсэг) текст болгоно.
+    prefilled: List[dict] = field(default_factory=list)
 
 
 NO_CONTEXT = ASRContext()
+
+
+# Завсар үүнээс богино бол ASR-д явуулахгүй (чимээгүй дээр Omni зохиож бичихээс сэргийлнэ, зардал хэмнэнэ)
+MIN_GAP_MS = 1000
+# Завсар нөхөх хэсгүүдийн resume түлхүүр: энгийн 30 сек-ийн хэсгүүдийн дугаартай давхцахгүй
+GAP_KEY_BASE = 1_000_000
+
+
+def plan_gaps(total_ms: int, covered: List[dict], chunk_ms: int, min_gap_ms: int = MIN_GAP_MS) -> List[tuple[int, int]]:
+    """[0, total_ms] дотроос covered цонхнуудад ороогүй завсруудыг chunk_ms-ээс урт биш хэсгүүдээр буцаана."""
+    gaps: List[tuple[int, int]] = []
+    pos = 0
+    for w in sorted(covered, key=lambda w: w["start_ms"]):
+        start, end = max(0, int(w["start_ms"])), min(total_ms, int(w["end_ms"]))
+        if start - pos >= min_gap_ms:
+            gaps.append((pos, start))
+        pos = max(pos, end)
+    if total_ms - pos >= min_gap_ms:
+        gaps.append((pos, total_ms))
+    pieces = []
+    for a, b in gaps:
+        n = math.ceil((b - a) / chunk_ms)
+        step = math.ceil((b - a) / n)
+        pieces += [(x, min(b, x + step)) for x in range(a, b, step)]
+    return pieces
 
 
 class ASRProvider(Protocol):
@@ -131,13 +159,26 @@ class QwenOmniASRProvider:
         try:
             flac = work / "source.flac"
             total_sec = await to_flac(src, flac)
-            chunk_sec = settings.omni_chunk_sec
-            n_parts = max(0, math.ceil(round(total_sec, 3) / chunk_sec))
-            if n_parts == 0:
-                raise ValueError("Аудио хоосон байна")
+            chunk_ms = settings.omni_chunk_sec * 1000
+            total_ms = int(round(total_sec, 3) * 1000)
+            if context.prefilled:
+                # Шууд бичлэг: хурлын үеэр гарсан бичвэрийг ашиглаж, зөвхөн дутуу хэсгийг дахин текст болгоно
+                pieces = plan_gaps(total_ms, context.prefilled, chunk_ms)
+                key_base = GAP_KEY_BASE
+                reused = [
+                    TranscriptSegment(id="", start_ms=int(w["start_ms"]), end_ms=min(total_ms, int(w["end_ms"])), text=w["text"])
+                    for w in context.prefilled if (w.get("text") or "").strip() and int(w["start_ms"]) < total_ms
+                ]
+            else:
+                n_grid = max(0, math.ceil(total_ms / chunk_ms))
+                if n_grid == 0:
+                    raise ValueError("Аудио хоосон байна")
+                pieces = [(i * chunk_ms, min(total_ms, (i + 1) * chunk_ms)) for i in range(n_grid)]
+                key_base = 0
+                reused = []
+            n_parts = len(pieces)
 
             sem = asyncio.Semaphore(max(1, settings.asr_concurrency))
-            chunk_ms = chunk_sec * 1000
             done = 0
             if on_progress:
                 on_progress(0, n_parts)
@@ -146,27 +187,33 @@ class QwenOmniASRProvider:
 
                 async def one(i: int) -> TranscriptSegment:
                     nonlocal done
-                    start = i * chunk_ms
-                    saved = context.resume.get(i)
+                    start, stop = pieces[i]
+                    key = key_base + i
+                    saved = context.resume.get(key)
                     if saved is not None:  # өмнөх оролдлогод дууссан: API дуудахгүй, хэсэг гаргахгүй
                         text, end = saved["text"], saved["end_ms"]
                     else:
                         async with sem:
-                            wav = await extract_wav(flac, i * chunk_sec, chunk_sec, work / f"part_{i:05d}.wav")
+                            # Энгийн горимд хэсгийн урт тогтмол (сүүлийнх нь файлын төгсгөл хүртэл)
+                            dur = (stop - start) / 1000 if key_base else chunk_ms / 1000
+                            wav = await extract_wav(flac, start / 1000, dur, work / f"part_{key:07d}.wav")
                             end = start + wav_bytes_duration_ms(wav)
                             text = await self._transcribe_bytes(client, wav, prompt)
                         if context.on_chunk:
-                            context.on_chunk(i, {"text": text, "start_ms": start, "end_ms": end})
+                            context.on_chunk(key, {"text": text, "start_ms": start, "end_ms": end})
                     done += 1
                     if on_progress:
                         on_progress(done, n_parts)
-                    return TranscriptSegment(id=f"seg_{i + 1}", start_ms=start, end_ms=end, text=text)
+                    return TranscriptSegment(id="", start_ms=start, end_ms=end, text=text)
 
-                segments = await asyncio.gather(*(one(i) for i in range(n_parts)))
+                segments = list(await asyncio.gather(*(one(i) for i in range(n_parts))))
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
-        return [s for s in segments if s.text]
+        segments = sorted([s for s in reused + segments if s.text], key=lambda s: s.start_ms)
+        for i, seg in enumerate(segments):
+            seg.id = f"seg_{i + 1}"
+        return segments
 
     async def transcribe_wav_bytes(self, wav: bytes, context: ASRContext = NO_CONTEXT) -> str:
         async with httpx.AsyncClient(timeout=settings.qwen_timeout_sec) as client:

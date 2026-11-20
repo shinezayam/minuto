@@ -6,13 +6,15 @@
 хэсэг дээр (үгийг таслахгүйн тулд) 10-25 секундын цонхонд хувааж ASR руу илгээгээд,
 гарсан бичвэрийг тухайн хурлын WebSocket холболтууд руу "transcript.segment" болгон түгээнэ.
 
-Энэ нь зөвхөн хурлын үеэр харуулах урьдчилсан бичвэр. Хурал дууссаны дараа processing.run()
-бүх бичлэгийг дахин бүтнээр нь текст болгож, хадгална.
+Текст болгосон (эсвэл чимээгүй гэж алгассан) цонх бүрийг live_windows.jsonl-д хадгална. Хурал дууссаны дараа
+processing.run() эдгээрийг дахин ASR-д явуулахгүй, зөвхөн хамрагдаагүй завсрыг (алдаа гарсан цонх, сүүлийн хэдэн
+секунд) текст болгоно. Ингэснээр шууд бичлэгийн аудиог хоёр удаа текст болгохгүй.
 """
 from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import math
 import subprocess
@@ -43,6 +45,29 @@ STREAMABLE_EXT = {".webm", ".ogg"}
 IDLE_TIMEOUT_SEC = 15 * 60
 
 Listener = Callable[[dict], Awaitable[None]]
+
+# Хурлын үеэр текст болгосон цонхнууд (мөр бүр {"start_ms","end_ms","text"}; text нь толь бичгийн засваргүй)
+WINDOWS_FILE = "live_windows.jsonl"
+
+
+def load_windows(meeting_dir: Path) -> List[dict]:
+    """Хадгалсан цонхнуудыг уншина. Файл байхгүй, эсвэл гэмтсэн мөрийг алгасна."""
+    path = meeting_dir / WINDOWS_FILE
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            w = json.loads(line)
+            out.append({"start_ms": int(w["start_ms"]), "end_ms": int(w["end_ms"]), "text": str(w.get("text") or "")})
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def discard_windows(meeting_dir: Path) -> None:
+    """Аудио солигдсон (файл upload хийсэн) бол хуучин шууд бичвэр тэр аудиод хамаарахгүй."""
+    (meeting_dir / WINDOWS_FILE).unlink(missing_ok=True)
 
 
 def _rms(pcm: bytes) -> float:
@@ -104,6 +129,19 @@ class LiveTranscriber:
         self._task: Optional[asyncio.Task] = None
         self._asr_context = asr_mod.NO_CONTEXT
         self._corrections: List[tuple[str, str]] = []
+
+        # Сервер дахин эхэлсэн, эсвэл сул байгаад хаагдсан бол: өмнө текст болгосон хэсгийг дахин ASR-д явуулахгүй.
+        # Хэсгүүдийг ffmpeg-д эхнээс нь хийнэ (webm-ийн header эхний хэсэгт), гэхдээ хамрагдсан PCM-ийг хаяна.
+        done = load_windows(meeting_dir)
+        covered_ms = max((w["end_ms"] for w in done), default=0)
+        self._consumed_samples = covered_ms * SAMPLE_RATE // 1000
+        self._skip_bytes = self._consumed_samples * 2
+        for w in done:
+            if w["text"].strip():
+                self.segments.append({
+                    "type": "transcript.segment", "segment_id": f"live_{len(self.segments) + 1}",
+                    "start_ms": w["start_ms"], "end_ms": w["end_ms"], "text": w["text"], "status": "provisional",
+                })
 
     # ---------- аудио оруулах ----------
 
@@ -169,6 +207,12 @@ class LiveTranscriber:
             data = out.read1(65536) if hasattr(out, "read1") else out.read(65536)
             if not data:
                 break
+            if self._skip_bytes:
+                drop = min(self._skip_bytes, len(data))
+                self._skip_bytes -= drop
+                data = data[drop:]
+                if not data:
+                    continue
             with self._lock:
                 start_full = len(self._pcm) // FRAME_BYTES
                 self._pcm.extend(data)
@@ -233,20 +277,29 @@ class LiveTranscriber:
             if _registry.get(self.meeting_id) is self:
                 del _registry[self.meeting_id]
 
+    def _save_window(self, start_ms: int, end_ms: int, text: str) -> None:
+        try:
+            with (self.meeting_dir / WINDOWS_FILE).open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"start_ms": start_ms, "end_ms": end_ms, "text": text}, ensure_ascii=False) + "\n")
+        except OSError:  # хадгалж чадаагүй бол хурлын дараа энэ хэсгийг дахин текст болгоно
+            logger.warning("meeting %s: could not save live window", self.meeting_id)
+
     async def _transcribe_window(self, provider: object, start_sample: int, pcm: bytes) -> None:
-        if _rms(pcm) < MIN_SPEECH_RMS:
-            return  # чимээгүй
         start_ms = start_sample * 1000 // SAMPLE_RATE
         end_ms = start_ms + (len(pcm) // 2) * 1000 // SAMPLE_RATE
+        if _rms(pcm) < MIN_SPEECH_RMS:
+            await asyncio.to_thread(self._save_window, start_ms, end_ms, "")  # чимээгүй: хамрагдсан гэж үзнэ
+            return
         try:
-            text = await provider.transcribe_wav_bytes(pcm_to_wav(pcm), context=self._asr_context)  # type: ignore[attr-defined]
-            if self._corrections:
-                text = vocabulary.apply_to_text(text, self._corrections)
+            raw = await provider.transcribe_wav_bytes(pcm_to_wav(pcm), context=self._asr_context)  # type: ignore[attr-defined]
         except Exception as e:  # noqa: BLE001 — шууд бичвэрийн алдаа бичлэгийг зогсоохгүй
+            # Хадгалахгүй: хурлын дараа энэ завсрыг дахин текст болгоно
             logger.warning("meeting %s: live ASR failed: %s", self.meeting_id, e)
             await self._broadcast({"type": "transcript.error", "message": "Шууд бичвэр түр гарахгүй байна"})
             return
-        text = (text or "").strip()
+        raw = (raw or "").strip()
+        await asyncio.to_thread(self._save_window, start_ms, end_ms, raw)
+        text = vocabulary.apply_to_text(raw, self._corrections) if self._corrections and raw else raw
         if not text:
             return
         seg = {

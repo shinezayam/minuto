@@ -227,3 +227,80 @@ def test_websocket_no_live_for_completed_meeting(isolated_env, fake_asr):
         with client.websocket_connect(f"/ws/meetings/{mid}/audio") as ws:
             ws.receive_json()
         assert live_transcriber.get(mid) is None
+
+
+# ---------- давхар ASR-ээс сэргийлэх ----------
+
+@needs_ffmpeg
+async def test_live_saves_windows_and_restart_skips_covered_audio(tmp_path, fake_asr):
+    """Цонх бүр дискэнд хадгалагдана. Шинэ transcriber (сервер дахин эхэлсэн) хамрагдсан хэсгийг дахин ASR-д явуулахгүй."""
+    blob = _make_webm(tmp_path / "rec.webm", "sine=frequency=300:duration=14,volume='if(lt(mod(t,1.5),1),1,0)':eval=frame")
+    meeting_dir = tmp_path / "m"
+    n = _slice_into(meeting_dir, blob, 7)
+
+    lt = LiveTranscriber("m5", meeting_dir)
+    lt.start()
+    try:
+        for _ in range(n):
+            await lt.notify_new_audio()
+        assert await _wait_for(lambda: len(lt.segments) >= 2)
+    finally:
+        await lt.close()
+
+    saved = live_transcriber.load_windows(meeting_dir)
+    assert len(saved) == len(lt.segments) >= 2
+    assert [w["text"] for w in saved] == [s["text"] for s in lt.segments]
+    covered_ms = saved[-1]["end_ms"]
+    calls_before = len(fake_asr.calls)
+
+    lt2 = LiveTranscriber("m5", meeting_dir)
+    assert len(lt2.segments) == len(saved)  # дахин холбогдсон хүн өмнөх бичвэрийг харна
+    lt2.start()
+    try:
+        for _ in range(n):
+            await lt2.notify_new_audio()
+        # Хамрагдсан ~12с-ийг хаясан тул зөвхөн үлдсэн ~2с PCM болж ирнэ
+        assert await _wait_for(lambda: len(lt2._frame_rms) >= 15, timeout=10)
+        await asyncio.sleep(0.5)
+        assert len(lt2._frame_rms) * 100 <= 14_000 - covered_ms + 200
+        lt2.request_flush()
+        await _wait_for(lambda: lt2._consumed_samples >= 13 * 16000, timeout=10)
+    finally:
+        await lt2.close()
+
+    new = live_transcriber.load_windows(meeting_dir)[len(saved):]
+    assert new, "сүүлийн хамрагдаагүй хэсгийг текст болгоно"
+    assert new[0]["start_ms"] == covered_ms  # хамрагдсан хэсгийг дахин явуулаагүй
+    assert len(fake_asr.calls) - calls_before == len(new)
+
+
+@needs_ffmpeg
+async def test_live_silence_counts_as_covered(tmp_path, fake_asr):
+    blob = _make_webm(tmp_path / "s.webm", "anullsrc=r=48000:cl=mono:d=10")
+    meeting_dir = tmp_path / "m"
+    n = _slice_into(meeting_dir, blob, 3)
+    lt = LiveTranscriber("m6", meeting_dir)
+    lt.start()
+    try:
+        for _ in range(n):
+            await lt.notify_new_audio()
+        lt.request_flush()
+        await _wait_for(lambda: lt._consumed_samples >= 9 * 16000, timeout=10)
+    finally:
+        await lt.close()
+    saved = live_transcriber.load_windows(meeting_dir)
+    assert saved and all(w["text"] == "" for w in saved)  # хадгалсан ч бичвэргүй
+    assert fake_asr.calls == []
+
+
+def test_load_windows_skips_broken_lines(tmp_path):
+    (tmp_path / live_transcriber.WINDOWS_FILE).write_text(
+        '{"start_ms": 0, "end_ms": 5000, "text": "a"}\n{broken\n{"start_ms": 5000, "end_ms": 9000, "text": ""}\n',
+        encoding="utf-8",
+    )
+    assert live_transcriber.load_windows(tmp_path) == [
+        {"start_ms": 0, "end_ms": 5000, "text": "a"},
+        {"start_ms": 5000, "end_ms": 9000, "text": ""},
+    ]
+    live_transcriber.discard_windows(tmp_path)
+    assert live_transcriber.load_windows(tmp_path) == []

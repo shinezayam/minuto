@@ -122,3 +122,38 @@ async def test_processing_uses_vocabulary(client: AsyncClient, monkeypatch, tmp_
     assert seen["llm_text"] == "Баатар тайлан өгнө."  # LLM засагдсан бичвэрийг авна
     segs = (await client.get(f"/api/meetings/{mid}/transcript")).json()["segments"]
     assert segs[0]["text"] == "Баатар тайлан өгнө."
+
+
+@pytest.mark.asyncio
+async def test_processing_passes_live_windows_and_upload_discards_them(client: AsyncClient, monkeypatch, tmp_path):
+    from app.services import live_transcriber
+
+    mid = (await client.post("/api/meetings", json={"title": "Т"})).json()["id"]
+    d = processing.meeting_dir(mid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / live_transcriber.WINDOWS_FILE).write_text('{"start_ms": 0, "end_ms": 4000, "text": "Яригч 1: сайн"}\n', encoding="utf-8")
+    seen: dict = {}
+
+    class FakeASR:
+        name = "fake"
+
+        async def transcribe(self, audio_path, on_progress=None, context=asr_mod.NO_CONTEXT):
+            seen["prefilled"] = context.prefilled
+            return [TranscriptSegment(id="s1", start_ms=0, end_ms=1000, text="а")]
+
+    class FakeLLM:
+        async def generate_minutes(self, transcript, participants=None, template=None, language="mn", notes=None):
+            return MeetingMinutes(title="Т", summary="С")
+
+    audio = tmp_path / "recorded.webm"
+    audio.write_bytes(b"x")
+    monkeypatch.setattr(processing, "find_meeting_audio", lambda d: Path(audio))
+    monkeypatch.setattr(asr_mod, "asr_provider", FakeASR())
+    monkeypatch.setattr(llm_mod, "llm_provider", FakeLLM())
+    assert meeting_store.try_begin_processing(mid)
+    await processing.run(mid)
+    assert seen["prefilled"] == [{"start_ms": 0, "end_ms": 4000, "text": "Яригч 1: сайн"}]
+
+    # Шинэ файл upload хийвэл хуучин шууд бичвэр тэр аудиод хамаарахгүй
+    live_transcriber.discard_windows(d)
+    assert live_transcriber.load_windows(d) == []

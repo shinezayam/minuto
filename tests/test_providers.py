@@ -115,6 +115,50 @@ async def test_omni_transcribes_each_chunk(tmp_path, qwen_key, monkeypatch):
     assert all(s.text.startswith("Сайн байна уу") for s in segs)
 
 
+def test_plan_gaps_only_uncovered_ranges():
+    covered = [{"start_ms": 0, "end_ms": 12_000}, {"start_ms": 12_000, "end_ms": 20_000}, {"start_ms": 45_000, "end_ms": 50_000}]
+    # 20–45с завсар (25с) 10с-ээс хэтрэхгүй хэсгүүдэд, төгсгөлийн 50–52с, 0.5с-ийн завсрыг алгасна
+    assert asr_mod.plan_gaps(52_000, covered, 10_000) == [
+        (20_000, 28_334), (28_334, 36_668), (36_668, 45_000), (50_000, 52_000),
+    ]
+    assert asr_mod.plan_gaps(50_500, covered, 10_000)[-1] == (36_668, 45_000)
+    assert asr_mod.plan_gaps(30_000, [], 30_000) == [(0, 30_000)]
+
+
+@needs_ffmpeg
+async def test_omni_reuses_live_windows_and_fills_gaps_only(tmp_path, qwen_key, monkeypatch):
+    monkeypatch.setattr(settings, "omni_chunk_sec", 10)
+    src = tmp_path / "meeting.mp3"
+    _make_tone(src, 25)
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, content=_sse("нөхсөн"))
+
+    _patch_httpx(monkeypatch, handler)
+    live = [
+        {"start_ms": 0, "end_ms": 9_000, "text": "Яригч 1: эхний"},
+        {"start_ms": 9_000, "end_ms": 14_000, "text": ""},  # чимээгүй
+        {"start_ms": 14_000, "end_ms": 19_000, "text": "Яригч 1: дунд"},
+    ]
+    saved = {}
+    ctx = asr_mod.ASRContext(prefilled=live, on_chunk=lambda i, d: saved.__setitem__(i, d))
+    segs = await asr_mod.QwenOmniASRProvider().transcribe(str(src), context=ctx)
+
+    assert len(calls) == 1  # зөвхөн 19–25с
+    assert [s.text for s in segs] == ["Яригч 1: эхний", "Яригч 1: дунд", "нөхсөн"]
+    assert [s.id for s in segs] == ["seg_1", "seg_2", "seg_3"]
+    assert segs[2].start_ms == 19_000 and 24_000 <= segs[2].end_ms <= 26_000
+    assert list(saved) == [asr_mod.GAP_KEY_BASE]
+
+    # Дахин оролдоход хадгалсан хэсгийг ч дахин дуудахгүй
+    calls.clear()
+    ctx2 = asr_mod.ASRContext(prefilled=live, resume=saved)
+    again = await asr_mod.QwenOmniASRProvider().transcribe(str(src), context=ctx2)
+    assert calls == [] and [s.text for s in again] == [s.text for s in segs]
+
+
 @needs_ffmpeg
 async def test_omni_auth_error_not_retried(tmp_path, qwen_key, monkeypatch):
     src = tmp_path / "m.mp3"
