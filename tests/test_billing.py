@@ -89,9 +89,9 @@ def test_plans_match_the_approved_price_table():
         rows = {p.code: (p.minutes, p.period_days, p.price_mnt, p.scope) for p in s.scalars(select(Plan)).all()}
     assert rows == {
         "free": (30, None, 0, "user"),
-        "starter": (120, 30, 29900, "user"),
-        "pro": (360, 30, 69900, "user"),
-        "team": (900, 30, 149900, "workspace"),
+        "starter": (120, 30, 9900, "user"),
+        "pro": (360, 30, 24900, "user"),
+        "team": (900, 30, 59900, "workspace"),
         "enterprise": (None, None, None, "workspace"),
     }
 
@@ -279,7 +279,7 @@ async def test_paid_order_activates_plan_once(client, fake, monkeypatch):
     r = await client.post("/api/billing/checkout", json={"plan_code": "pro"})
     assert r.status_code == 201, r.text
     order = r.json()
-    assert order["amount_mnt"] == 69900 and order["status"] == "pending" and order["payment"]["redirect_url"]
+    assert order["amount_mnt"] == 24900 and order["status"] == "pending" and order["payment"]["redirect_url"]
     ref = fake.calls and next(iter(fake.intents))
 
     assert (await client.get(f"/api/billing/orders/{order['id']}")).json()["status"] == "pending"
@@ -349,7 +349,7 @@ async def test_team_requires_an_owned_workspace(client, fake):
     assert r.status_code == 422
     ws = (await client.post("/api/workspaces", json={"name": "Баг", "workspace_type": "organization"})).json()
     r = await client.post("/api/billing/checkout", json={"plan_code": "team", "workspace_id": ws["id"]})
-    assert r.status_code == 201 and r.json()["amount_mnt"] == 149900
+    assert r.status_code == 201 and r.json()["amount_mnt"] == 59900
 
 
 async def test_webhook_triggers_server_side_check(client, fake):

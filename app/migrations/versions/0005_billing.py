@@ -17,7 +17,7 @@ depends_on = None
 _LIVE = sa.text("state IN ('reserved','debited')")
 _ACTIVE_SUB = sa.text("status = 'active'")
 
-# Зөвшөөрөгдсөн үнийн хүснэгт (BILLING_PLAN.md). Өөрчлөхөд шинэ migration + test_billing-ийн үнийн тест.
+# Анхны үнийн хүснэгт (0013-аар бууруулсан). Өөрчлөхөд шинэ migration + test_billing-ийн үнийн тест.
 PLANS = [
     {"code": "free", "name": "Free", "kind": "free", "minutes": 30, "period_days": None, "price_mnt": 0, "scope": "user", "sort": 0},
     {"code": "starter", "name": "Starter", "kind": "paid", "minutes": 120, "period_days": 30, "price_mnt": 29900, "scope": "user", "sort": 1},
