@@ -88,10 +88,10 @@ def test_plans_match_the_approved_price_table():
     with session_scope() as s:
         rows = {p.code: (p.minutes, p.period_days, p.price_mnt, p.scope) for p in s.scalars(select(Plan)).all()}
     assert rows == {
-        "free": (30, None, 0, "user"),
-        "starter": (120, 30, 9900, "user"),
-        "pro": (360, 30, 24900, "user"),
-        "team": (900, 30, 59900, "workspace"),
+        "free": (60, None, 0, "user"),
+        "starter": (180, 30, 9900, "user"),
+        "pro": (480, 30, 24900, "user"),
+        "team": (1200, 30, 59900, "workspace"),
         "enterprise": (None, None, None, "workspace"),
     }
 
@@ -116,7 +116,7 @@ async def test_off_mode_touches_nothing(client, duration, monkeypatch):
     assert (await process(client, mid)).status_code == 202
     assert events() == []
     me = (await client.get("/api/billing/me")).json()
-    assert me["metering"] == "off" and me["minutes"]["remaining"] == 30
+    assert me["metering"] == "off" and me["minutes"]["remaining"] == 60
 
 
 async def test_shadow_records_and_debits_after_transcript(client, duration, monkeypatch):
@@ -127,7 +127,7 @@ async def test_shadow_records_and_debits_after_transcript(client, duration, monk
     [ev] = events(mid)
     assert (ev.state, ev.billable_minutes, ev.source, ev.shadow, ev.decision) == ("debited", 3, "upload", True, "allowed")
     me = (await client.get("/api/billing/me")).json()
-    assert me["minutes"] == {"allowance": 30, "used": 3, "remaining": 27}
+    assert me["minutes"] == {"allowance": 60, "used": 3, "remaining": 57}
 
 
 async def test_reprocessing_the_same_audio_is_free(client, duration, monkeypatch):
@@ -140,7 +140,7 @@ async def test_reprocessing_the_same_audio_is_free(client, duration, monkeypatch
 
 async def test_shadow_never_blocks_and_marks_would_block(client, duration, monkeypatch):
     metering(monkeypatch, "shadow")
-    duration["sec"] = 45 * 60  # 45 минут > 30 үнэгүй
+    duration["sec"] = 75 * 60  # 75 минут > 60 үнэгүй
     mid = await upload_meeting(client)
     assert (await process(client, mid)).status_code == 202
     [ev] = events(mid)
@@ -179,18 +179,18 @@ async def test_failed_transcription_releases_the_reservation(client, duration, m
 
 async def test_enforce_refuses_an_upload_longer_than_what_is_left(client, duration, monkeypatch):
     metering(monkeypatch, "enforce")
-    duration["sec"] = 31 * 60
+    duration["sec"] = 61 * 60
     mid = await upload_meeting(client)
     r = await client.post(f"/api/meetings/{mid}/process")
     assert r.status_code == 402
-    assert r.json()["detail"].startswith("MINUTES_INSUFFICIENT") and "31 минут" in r.json()["detail"]
+    assert r.json()["detail"].startswith("MINUTES_INSUFFICIENT") and "61 минут" in r.json()["detail"]
     assert events(mid) == []
     assert (await client.get(f"/api/meetings/{mid}")).json()["status"] != "processing"
 
 
 async def test_enforce_exhausted_then_blocked(client, duration, monkeypatch):
     metering(monkeypatch, "enforce")
-    duration["sec"] = 30 * 60
+    duration["sec"] = 60 * 60
     assert (await process(client, await upload_meeting(client, salt=1))).status_code == 202
     duration["sec"] = 10
     r = await process(client, await upload_meeting(client, salt=2))
@@ -200,20 +200,20 @@ async def test_enforce_exhausted_then_blocked(client, duration, monkeypatch):
 async def test_enforce_live_recording_is_processed_with_overdraft(client, duration, monkeypatch):
     """Шууд бичлэгийг дахин бичих боломжгүй тул хэзээ ч түгжихгүй — нэг удаа хасах руу орно."""
     metering(monkeypatch, "enforce")
-    duration["sec"] = 50 * 60
+    duration["sec"] = 80 * 60
     mid = (await client.post("/api/meetings", json={"title": "Шууд"})).json()["id"]
     d = processing.meeting_dir(mid)
     d.mkdir(parents=True, exist_ok=True)
     (d / "000000.wav").write_bytes(wav_bytes())  # шууд бичлэгийн хэсэг
     assert (await process(client, mid)).status_code == 202
     [ev] = events(mid)
-    assert (ev.source, ev.decision, ev.billable_minutes) == ("live", "overdraft", 50)
+    assert (ev.source, ev.decision, ev.billable_minutes) == ("live", "overdraft", 80)
     me = (await client.get("/api/billing/me")).json()
     assert me["minutes"]["remaining"] == -20
 
 
 def test_concurrent_reserves_never_exceed_the_allowance(monkeypatch, duration):
-    """10 зэрэг reserve (тус бүр 10 мин, нийт 30 мин үлдэгдэл): яг 3 нь л зөвшөөрөгдөнө."""
+    """10 зэрэг reserve (тус бүр 10 мин, нийт 60 мин үлдэгдэл): яг 6 нь л зөвшөөрөгдөнө."""
     metering(monkeypatch, "enforce")
     duration["sec"] = 600
     from app.db import User
@@ -245,9 +245,9 @@ def test_concurrent_reserves_never_exceed_the_allowance(monkeypatch, duration):
     threads = [threading.Thread(target=go, args=(m,)) for m in mids]
     [t.start() for t in threads]
     [t.join() for t in threads]
-    assert sum(1 for r in results if r not in ("MINUTES_EXHAUSTED", "MINUTES_INSUFFICIENT")) == 3
+    assert sum(1 for r in results if r not in ("MINUTES_EXHAUSTED", "MINUTES_INSUFFICIENT")) == 6
     with session_scope() as s:
-        assert billing.balance(s, "user", uid).used == 30
+        assert billing.balance(s, "user", uid).used == 60
 
 
 def test_reconcile_releases_orphans(monkeypatch, duration):
@@ -288,7 +288,7 @@ async def test_paid_order_activates_plan_once(client, fake, monkeypatch):
     assert paid["status"] == "paid" and paid["payment"] is None
 
     me = (await client.get("/api/billing/me")).json()
-    assert me["plan"]["code"] == "pro" and me["minutes"]["allowance"] == 360
+    assert me["plan"]["code"] == "pro" and me["minutes"]["allowance"] == 480
     assert billing.apply_paid_order(order["id"]) is False  # давхар хэрэглэхгүй
     with session_scope() as s:
         assert len(s.scalars(select(Subscription)).all()) == 1
@@ -329,7 +329,7 @@ async def test_renewal_is_scheduled_after_the_current_period_and_cancel_keeps_ac
         assert billing._aware(subs[1].period_start) == billing._aware(subs[0].period_end)
         later = billing._aware(subs[0].period_end) + timedelta(seconds=1)
         b = billing.balance(s, "user", uid, later)
-        assert b.subscription.id == subs[1].id and b.allowance == 120 and b.used == 0  # үлдэгдэл шилжихгүй
+        assert b.subscription.id == subs[1].id and b.allowance == 180 and b.used == 0  # үлдэгдэл шилжихгүй
 
     r = await client.post("/api/billing/cancel", json={})
     assert r.status_code == 200 and r.json()["cancel_at_period_end"] is True

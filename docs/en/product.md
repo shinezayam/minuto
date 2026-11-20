@@ -87,10 +87,10 @@ Search, "Pin" (shown at the top), archive, trash (kept for 30 days on paid plans
 
 | Plan | Minutes | Period | Price | For |
 |---|---|---|---|---|
-| Free | 30 | one-time | ₮0 | Individual |
-| Starter | 120 | 30 days | ₮9,900 | Individual |
-| Pro | 360 | 30 days | ₮24,900 | Individual |
-| Team | 900 | 30 days | ₮59,900 | Workspace |
+| Free | 60 (1 h) | one-time | ₮0 | Individual |
+| Starter | 180 (3 h) | 30 days | ₮9,900 | Individual |
+| Pro | 480 (8 h) | 30 days | ₮24,900 | Individual |
+| Team | 1,200 (20 h) | 30 days | ₮59,900 | Workspace |
 | Enterprise | by contract | – | quote | Organisation |
 
 - Unit: minutes of processed audio (rounded up per meeting). Reprocessing the same audio is free.
