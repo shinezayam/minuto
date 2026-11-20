@@ -152,18 +152,17 @@ def template_instruction(template: Optional[dict]) -> str:
     sections = template.get("sections")
     if sections:
         wanted = ", ".join(s for s in sections if s in TEMPLATE_GROUPS or s == "summary")
-        parts.append(f"Зөвхөн эдгээр хэсгийг бөглө: {wanted}. Бусад хэсгийг хоосон массив болго.")
+        parts.append(
+            f"Энэ загварт хамгийн чухал хэсгүүд: {wanted}. Эдгээрт онцгой анхаар. "
+            "Бусад хэсгийг ч бичвэрт байгаа бол алгасалгүй бөглө (жишээ нь гарсан шийдвэр, даалгаврыг орхихгүй)."
+        )
     return "\n".join(parts) + "\n\n"
 
 
 def apply_template_sections(minutes: MeetingMinutes, template: Optional[dict]) -> MeetingMinutes:
-    """Загварт ороогүй хэсгийг моделийн хариунаас үл хамааран хоослоно."""
-    sections = (template or {}).get("sections")
-    if not sections:
-        return minutes
-    for key, attr in TEMPLATE_GROUPS.items():
-        if key not in sections:
-            setattr(minutes, attr, [])
+    """Загварын хэсгүүдийг онцлох дарааллаар тэмдэглэнэ. Бусад хэсгийг хоослохгүй: мэдээлэл алдагдахгүй."""
+    sections = (template or {}).get("sections") or []
+    minutes.section_order = [s for s in sections if s in TEMPLATE_GROUPS]
     return minutes
 
 

@@ -51,7 +51,7 @@ async def test_other_users_template_rejected(client: AsyncClient, anon_client: A
     assert r.status_code == 404
 
 
-def test_apply_template_sections_empties_unlisted_groups():
+def test_apply_template_sections_keeps_all_groups_and_orders():
     minutes = MeetingMinutes.model_validate(
         {
             "title": "Х",
@@ -63,10 +63,12 @@ def test_apply_template_sections_empties_unlisted_groups():
         }
     )
     out = llm_mod.apply_template_sections(minutes, {"sections": ["summary", "action_items"]})
-    assert out.topics == [] and out.decisions == [] and out.open_questions == []
-    assert len(out.action_items) == 1 and out.summary == "Т"
-    # загваргүй бол өөрчлөхгүй
-    assert llm_mod.apply_template_sections(minutes, None) is minutes
+    # хэсгийг хоослохгүй, зөвхөн онцлох дарааллыг тэмдэглэнэ
+    assert len(out.topics) == len(out.decisions) == len(out.open_questions) == len(out.action_items) == 1
+    assert out.section_order == ["action_items"]
+    # загваргүй бол онцлох хэсэг байхгүй
+    plain = MeetingMinutes.model_validate({"title": "Х", "summary": "Т"})
+    assert llm_mod.apply_template_sections(plain, None).section_order == []
 
 
 def test_language_instruction():
@@ -94,7 +96,8 @@ async def test_qwen_prompt_carries_template_and_language(monkeypatch):
     system, user = (x["content"] for x in seen["body"]["messages"])
     assert "English" in system
     assert "Daily Standup" in user and "Богино бич" in user
-    assert m.topics == []  # загварт topics байхгүй тул хоосолсон
+    assert len(m.topics) == 1  # загварт ороогүй ч хоослохгүй
+    assert m.section_order == ["action_items"]
 
 
 async def test_default_templates_not_duplicated(client: AsyncClient):

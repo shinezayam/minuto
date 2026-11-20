@@ -113,3 +113,5 @@ class MeetingMinutes(BaseModel):
     approved_at: Optional[str] = None
     # LLM-ийн гаргасан {сегмент: {сегмент доторх шошго: хурлын хэмжээний яригч}}; бичвэрт хэрэглээд хоосолно
     speaker_map: Dict[str, Dict[str, str]] = {}
+    # Загвараар эхэлсэн хурлын онцлох хэсгүүд (topics/decisions/action_items/open_questions); UI эдгээрийг дээр нь харуулна
+    section_order: List[str] = []
