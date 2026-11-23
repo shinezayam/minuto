@@ -5,16 +5,24 @@ from datetime import timedelta
 
 from app.config import settings
 from app.db import Meeting, session_scope
-from app.services import meeting_store
+from app.services import meeting_store, payments
 from tests.conftest import register
 
 
 async def _user(client, email, paid=False, monkeypatch=None):
     h = {"Authorization": f"Bearer {(await register(client, email))['token']}"}
     if paid:
-        monkeypatch.setattr(settings, "admin_emails", email)
-        monkeypatch.setattr(settings, "billing_sandbox", "admin")
-        assert (await client.post("/api/billing/sandbox-checkout", json={"plan_code": "starter"}, headers=h)).status_code == 201
+        # Жинхэнэ төлбөрийн урсгал (FakeProvider): checkout → paid → багц идэвхжинэ
+        fake = payments.FakeProvider()
+        payments.set_provider(fake)
+        monkeypatch.setattr(settings, "billing_checkout_enabled", True)
+        try:
+            r = await client.post("/api/billing/checkout", json={"plan_code": "starter"}, headers=h)
+            assert r.status_code == 201, r.text
+            fake.mark(next(iter(fake.intents)), "paid")
+            assert (await client.get(f"/api/billing/orders/{r.json()['id']}", headers=h)).json()["status"] == "paid"
+        finally:
+            payments.set_provider(None)
     return h
 
 

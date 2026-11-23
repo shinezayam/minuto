@@ -48,7 +48,7 @@ A repeated `sequence` overwrites and is acked again. Disallowed Origin → close
 | Vocabulary | `GET`/`POST /api/vocabulary` · `DELETE /api/vocabulary/{id}` |
 | Contacts | `GET /api/contacts` · `DELETE /api/contacts/{id}` |
 | Workspaces | `GET`/`POST /api/workspaces` · `GET`/`DELETE /{wid}` · `GET /{wid}/members` · `POST /{wid}/invite` · `PATCH`/`DELETE /{wid}/members/{uid}` · `POST /{wid}/transfer` · `GET`/`POST /{wid}/projects` · `DELETE /{wid}/projects/{pid}` |
-| Billing | `GET /api/billing/plans` (public) · `GET /api/billing/me` · `POST /api/billing/checkout` · `POST /api/billing/sandbox-checkout` · `GET /api/billing/orders[/{id}]` · `POST /api/billing/cancel` · `POST /api/billing/webhooks/wire` |
+| Billing | `GET /api/billing/plans` (public) · `GET /api/billing/me` · `POST /api/billing/checkout` · `GET /api/billing/orders[/{id}]` · `POST /api/billing/cancel` · `POST /api/billing/webhooks/wire` |
 | Feedback, requests | `POST /api/feedback` · `POST /api/contact-requests` (public) |
 | Admin | `GET /api/admin/me` · `GET`/`POST /api/admin/admins` · `DELETE /api/admin/admins/{email}` · `GET /api/admin/contact-requests` · `PATCH …/{id}` |
 

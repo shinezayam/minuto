@@ -47,7 +47,7 @@ JWT (`JWT_SECRET`, `JWT_TTL_DAYS=30`) `Authorization: Bearer` header-ээр.
 | Түвшин | Хэн | Эрх |
 |---|---|---|
 | Үндсэн админ | `ADMIN_EMAILS` env | Бүгд + бусад админыг нэмэх/хасах |
-| Нэмэгдсэн админ | `admin_grants` хүснэгт | Enterprise хүсэлт, санал хүсэлт, sandbox checkout |
+| Нэмэгдсэн админ | `admin_grants` хүснэгт | Enterprise хүсэлт, санал хүсэлт |
 
 Endpoint: `/api/admin/me`, `/admins`, `/contact-requests`.
 

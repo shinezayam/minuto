@@ -100,9 +100,6 @@ class Settings(BaseSettings):
     wire_api_key: str = ""
     wire_webhook_secret: str = ""
     wire_base_url: str = "https://api.wire.mn"
-    # Sandbox төлбөр (жинхэнэ мөнгөгүйгээр Starter/Pro идэвхжүүлэх, туршилтад): off | admin | all.
-    # admin = зөвхөн ADMIN_EMAILS-д байгаа хэрэглэгч. "all" бол хэн ч үнэгүй багц авна — зөвхөн туршилтын орчинд.
-    billing_sandbox: str = "admin"
     # Төлсний дараа хөтчийг буцаах frontend хаяг. Хоосон бол CORS_ORIGINS-ийн эхнийх.
     frontend_url: str = ""
 
@@ -123,9 +120,6 @@ class Settings(BaseSettings):
         self.wire_api_key = self.wire_api_key.strip().strip("\"'").strip()
         self.wire_webhook_secret = self.wire_webhook_secret.strip().strip("\"'").strip()
         self.billing_metering = (self.billing_metering or "off").strip().lower()
-        self.billing_sandbox = (self.billing_sandbox or "off").strip().lower()
-        if self.billing_sandbox not in ("off", "admin", "all"):
-            raise ValueError("BILLING_SANDBOX нь off | admin | all байх ёстой")
         if self.billing_metering not in ("off", "shadow", "enforce"):
             raise ValueError("BILLING_METERING нь off | shadow | enforce байх ёстой")
         return self

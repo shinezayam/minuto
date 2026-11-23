@@ -4,13 +4,13 @@ Production backend: `https://minuto-ai-meeting-assistant.onrender.com`. Default 
 (`BILLING_METERING=off`, `BILLING_CHECKOUT_ENABLED=false`), тэгэхээр deploy хийхэд хэрэглэгчийн үйл ажиллагаа өөрчлөгдөхгүй.
 Зөвхөн migration `0005` ажиллаж, шинэ хүснэгтүүд үүснэ.
 
-## Багц (migration 0005-д seed, минутыг 0014-д нэмсэн, үнийг клиентээс хэзээ ч авахгүй)
+## Багц (migration 0005-д seed, үнийг 0013-д бууруулсан, минутыг 0014-д нэмээд 0015-д буцаасан, үнийг клиентээс хэзээ ч авахгүй)
 | code | минут | хугацаа | үнэ | хамрах хүрээ |
 |---|---|---|---|---|
-| free | 60 | нэг удаа | 0₮ | хэрэглэгч |
-| starter | 180 | 30 хоног | 9,900₮ | хэрэглэгч |
-| pro | 480 | 30 хоног | 24,900₮ | хэрэглэгч |
-| team | 1,200 | 30 хоног | 59,900₮ | workspace |
+| free | 30 | нэг удаа | 0₮ | хэрэглэгч |
+| starter | 120 | 30 хоног | 9,900₮ | хэрэглэгч |
+| pro | 360 | 30 хоног | 24,900₮ | хэрэглэгч |
+| team | 900 | 30 хоног | 59,900₮ | workspace |
 | enterprise | гэрээгээр | – | – | үнийн санал (contact form) |
 
 ## Дүрэм (хамтрагчийн §H саналууд, батлагдсан)
@@ -28,7 +28,7 @@ Wire-д **test горим байхгүй**: API зөвхөн `sk_live_…` тү�
 Тиймээс эхний шалгалт бол жинхэнэ, хамгийн бага (Starter) төлбөр.
 
 1. `app.wire.mn` → Project → Keys: `sk_live_…` түлхүүр үүсгэнэ. Түлхүүрийг chat, git, мессежэд **хэзээ ч** бичихгүй.
-2. Render → minuto service → Environment: `WIRE_API_KEY`, `FRONTEND_URL=https://mongolian-ai-minutes.vercel.app` → Save.
+2. Render → minuto service → Environment: `WIRE_API_KEY`, `FRONTEND_URL=https://minuto.mn` → Save.
 3. Webhook бүртгэх (Render → minuto → **Shell**):
    `python -m app.wire_setup`
    Гарч ирэх `WIRE_WEBHOOK_SECRET=whsec_…` мөрийг Render env-д нэмнэ (дахин харагдахгүй) → Save (сервис дахин эхэлнэ).

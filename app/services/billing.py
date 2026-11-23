@@ -17,7 +17,6 @@ import logging
 import math
 import re
 import threading
-import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -448,50 +447,8 @@ def order_dict(o: PaymentOrder) -> dict:
     }
 
 
+# Устгагдсан туршилтын (мөнгөгүй) төлбөрийн өмнөх захиалгуудыг жинхэнэ орлогоос ялгаж харуулахад л хэрэглэнэ.
 SANDBOX_PROVIDER = "sandbox"
-SANDBOX_PLANS = ("starter", "pro", "team")
-
-
-def sandbox_allowed(email: Optional[str]) -> bool:
-    """Sandbox төлбөр (мөнгөгүй) энэ хэрэглэгчид нээлттэй эсэх. BILLING_SANDBOX=off | admin | all."""
-    mode_ = settings.billing_sandbox
-    if mode_ == "all":
-        return True
-    if mode_ != "admin" or not email:
-        return False
-    from app.services import admins
-
-    return admins.is_admin(email)
-
-
-def create_sandbox_order(user_id: str, email: str, plan_code: str, workspace_id: Optional[str] = None) -> dict:
-    """Туршилтын төлбөр: QPay/Wire руу явуулахгүй, захиалгыг шууд "төлөгдсөн" болгож багцыг идэвхжүүлнэ.
-    Захиалга provider="sandbox"-оор тэмдэглэгдэх тул жинхэнэ орлогоос ялгагдана."""
-    if not sandbox_allowed(email):
-        raise BillingError("SANDBOX_DISABLED", 403, "Sandbox төлбөр танд нээлттэй биш байна")
-    if plan_code not in SANDBOX_PLANS:
-        raise BillingError("INVALID_PLAN", 400, "Sandbox төлбөр зөвхөн Starter, Pro, Team багцад боломжтой")
-    with session_scope() as s:
-        plan = s.get(Plan, plan_code)
-        if plan is None or not plan.active or plan.kind != "paid" or not plan.price_mnt:
-            raise BillingError("INVALID_PLAN", 400, "Ийм багц байхгүй")
-        if plan.scope == "workspace":
-            if not workspace_id:
-                raise BillingError("WORKSPACE_REQUIRED", 422, "Team багцыг аль workspace-д авахаа сонгоно уу")
-            if _role(s, user_id, workspace_id) not in ("owner", "admin"):
-                raise BillingError("FORBIDDEN", 403, "Зөвхөн workspace-ийн эзэн эсвэл админ багц авна")
-        else:
-            workspace_id = None
-        order = PaymentOrder(user_id=user_id, workspace_id=workspace_id, plan_code=plan.code, amount_mnt=int(plan.price_mnt),
-                             status="pending", provider=SANDBOX_PROVIDER, provider_ref=f"sandbox-{uuid.uuid4().hex}",
-                             created_at=_now(), updated_at=_now())
-        s.add(order)
-        s.flush()
-        order_id = order.id
-    apply_paid_order(order_id)
-    logger.warning("SANDBOX order %s: %s activated for user %s without payment", order_id, plan_code, user_id)
-    with session_scope() as s:
-        return order_dict(s.get(PaymentOrder, order_id))
 
 
 def create_checkout(user_id: str, plan_code: str, workspace_id: Optional[str]) -> dict:

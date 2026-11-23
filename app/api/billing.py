@@ -49,8 +49,6 @@ def get_billing_me(workspace_id: Optional[str] = Query(default=None, max_length=
         out = billing.summary(user.id, workspace_id)
     except billing.BillingError as e:
         raise _http(e) from e
-    # Sandbox (мөнгөгүй туршилтын) төлбөр: Starter, Pro, Team
-    out["sandbox_enabled"] = billing.sandbox_allowed(user.email)
     return out
 
 
@@ -58,20 +56,6 @@ def get_billing_me(workspace_id: Optional[str] = Query(default=None, max_length=
 async def checkout(body: CheckoutIn, user: UserResponse = Depends(current_user)) -> dict:
     try:
         return await asyncio.to_thread(billing.create_checkout, user.id, body.plan_code, body.workspace_id)
-    except billing.BillingError as e:
-        raise _http(e) from e
-
-
-class SandboxIn(BaseModel):
-    plan_code: Literal["starter", "pro", "team"]
-    workspace_id: Optional[str] = None
-
-
-@router.post("/api/billing/sandbox-checkout", status_code=201)
-def sandbox_checkout(body: SandboxIn, user: UserResponse = Depends(current_user)) -> dict:
-    """Туршилтын (мөнгөгүй) төлбөр — BILLING_SANDBOX-оор зөвшөөрөгдсөн хэрэглэгчид л."""
-    try:
-        return billing.create_sandbox_order(user.id, user.email, body.plan_code, body.workspace_id)
     except billing.BillingError as e:
         raise _http(e) from e
 

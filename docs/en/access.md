@@ -47,7 +47,7 @@ JWT (`JWT_SECRET`, `JWT_TTL_DAYS=30`) in the `Authorization: Bearer` header.
 | Level | Who | Rights |
 |---|---|---|
 | Owner admin | `ADMIN_EMAILS` env | Everything + add/remove other admins |
-| Added admin | `admin_grants` table | Enterprise requests, feedback, sandbox checkout |
+| Added admin | `admin_grants` table | Enterprise requests, feedback |
 
 Endpoints: `/api/admin/me`, `/admins`, `/contact-requests`.
 
