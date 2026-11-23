@@ -100,7 +100,7 @@ _hosts = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()] or 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
 
 # CORS
-origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+origins = settings.cors_origin_list()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

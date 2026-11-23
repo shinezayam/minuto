@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     admin_emails: str = ""
 
     cors_origins: str = "http://localhost:3000"
+    # Бидний өөрийн нийтийн домэйнууд: env-д нэмэхээ мартсан ч CORS/WebSocket дээр үргэлж зөвшөөрөгдөнө
+    public_site_origins: str = "https://minuto.mn,https://www.minuto.mn"
     # "production" үед /api/docs унтарч, нууц (JWT_SECRET) шаардлагатай. Render дээр RENDER env автоматаар production гэж тооцогдоно.
     environment: str = "development"
     # Урд талд найдвартай proxy (Render, Vercel) байвал X-Forwarded-For-ийн сүүлийн хаягийг клиентийн IP гэж үзнэ.
@@ -145,9 +147,22 @@ class Settings(BaseSettings):
     def proxy_trusted(self) -> bool:
         return self.trust_proxy or self.is_production
 
+    def cors_origin_list(self) -> list[str]:
+        """CORS_ORIGINS + нийтийн домэйнууд (давхардалгүй, дарааллаа хадгална)."""
+        return _merge_origins(self.cors_origins, self.public_site_origins)
+
     def ws_origins(self) -> list[str]:
-        raw = self.ws_allowed_origins or self.cors_origins
-        return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+        return _merge_origins(self.ws_allowed_origins or self.cors_origins, self.public_site_origins)
+
+
+def _merge_origins(*raws: str) -> list[str]:
+    out: list[str] = []
+    for raw in raws:
+        for o in raw.split(","):
+            o = o.strip().rstrip("/")
+            if o and o not in out:
+                out.append(o)
+    return out
 
 
 settings = Settings()

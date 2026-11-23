@@ -135,6 +135,18 @@ def test_ws_origin_allow_list(monkeypatch):
     assert ws_origin_allowed(None)  # хөтөч биш клиент: токенээр л нэвтэрнэ
     assert ws_origin_allowed("https://app.example.mn")
     assert not ws_origin_allowed("https://evil.example")
+    assert ws_origin_allowed("https://minuto.mn")  # нийтийн домэйн env-д байхгүй ч зөвшөөрөгдөнө
+
+
+def test_cors_allows_public_domain_without_env():
+    from fastapi.testclient import TestClient as TC
+    with TC(app) as c:
+        for origin in ("https://minuto.mn", "https://www.minuto.mn"):
+            r = c.options("/api/auth/login", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+            assert r.status_code == 200
+            assert r.headers["access-control-allow-origin"] == origin
+        r = c.options("/api/auth/login", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"})
+        assert "access-control-allow-origin" not in r.headers
 
 
 def test_websocket_rejects_foreign_origin(monkeypatch):
