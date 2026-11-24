@@ -939,6 +939,14 @@
             "title": "Minutes Status",
             "type": "string"
           },
+          "omitted_segment_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Omitted Segment Ids",
+            "type": "array"
+          },
           "open_questions": {
             "default": [],
             "items": {

@@ -8,9 +8,11 @@
 
 | Үүрэг | Тохиргоо | Сонголт | Production |
 |---|---|---|---|
-| ASR (яриа → текст) | `ASR_PROVIDER` | `omni` · `whisper` · `demo` | `omni`, `OMNI_MODEL=qwen3.8-omni-flash` |
+| ASR (яриа → текст) | `ASR_PROVIDER` | `scribe` · `omni` · `whisper` · `demo` | `scribe` (`ELEVENLABS_API_KEY`, `SCRIBE_MODEL=scribe_v3`) руу шилжиж байна; өмнө нь `omni` |
 | LLM (тэмдэглэл, Ask) | `LLM_PROVIDER` | `qwen` · `demo` | `qwen`, `QWEN_MODEL=qwen3.8-max` |
 
+- `scribe`: бүтэн файлыг ElevenLabs руу нэг дуудлагаар илгээнэ (1 цагийн бичлэг ~8 мин, ~$0.20/цаг). Яригчийг бүтэн хурлын хэмжээнд ялгадаг тул LLM яригчийг дахин дугаарлахгүй, зөвхөн нэрийг нь тодорхойлно. Үгсийг ≤30 сек (`SCRIBE_SEGMENT_SEC`) сегментэд бүлэглэнэ. Хурлын үеийн шууд бичвэрийг (10-25 сек цонх) мөн Scribe-аар гаргадаг ч эцсийн бичвэрт дахин ашиглахгүй.
+- Qwen-ий агуулгын шүүлтүүр (`data_inspection_failed`) тогтворгүй бөгөөд урт бичвэрт илүү өртдөг: ижил хүсэлтийг 3 удаа илгээнэ → татгалзсаар бол бичвэрийг хоёр хувааж тус тусад нь гаргаад нэгтгэнэ → ганц сегмент хүртэл хуваасан ч өртвөл л тэр сегментийг хасаж, хураангуйд аль хэсэг ороогүйг бичнэ (`omitted_segment_ids`).
 - Qwen-ийг OpenAI-compatible API-аар дуудна. `QWEN_BASE_URL=https://tokenhub.mn/v1` (Гэрэгэ Token Hub) эсвэл DashScope шууд.
 - `demo` — гадагш дуудахгүй, `[ДЕМО]` шошготой үр дүн. Тест, staging, smoke-д.
 - `whisper` — локал, 2 GB+ RAM; Render free-д багтахгүй. Стандарт Whisper монгол хэлийг муу таньдаг.

@@ -22,7 +22,8 @@ Backend: Render (FastAPI). Frontend: Vercel (Next.js). Data: Postgres (Render) a
 | `DATABASE_URL` | **yes** | SQLite file | Postgres. In production SQLite logs an ERROR (data lost on deploy). |
 | `CORS_ORIGINS` | yes | `http://localhost:3000` | Comma list of frontend origins. Also the WebSocket Origin allow-list unless `WS_ALLOWED_ORIGINS` is set. |
 | `QWEN_API_KEY` | yes (if providers ≠ demo) | – | Secret, set in the dashboard, never in git. |
-| `ASR_PROVIDER` / `LLM_PROVIDER` | yes | `demo` | `omni`/`whisper` and `qwen`. |
+| `ASR_PROVIDER` / `LLM_PROVIDER` | yes | `demo` | `scribe`/`omni`/`whisper` and `qwen`. |
+| `ELEVENLABS_API_KEY` | if `ASR_PROVIDER=scribe` | – | Secret (Speech to Text permission). Startup fails if missing while `scribe` is selected — set the key **before** switching the provider. |
 | `AUDIO_STORAGE_BACKEND` | **yes for pilots** | `local` | `supabase` keeps every meeting's audio in a private Supabase Storage bucket (disk becomes a cache; survives deploys). Needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-side secret), `SUPABASE_AUDIO_BUCKET` (private bucket, default `meeting-audio-private`). Startup fails if misconfigured. |
 | `ALLOWED_HOSTS` | recommended | `*` | e.g. `minuto-api.onrender.com`. |
 | `ALLOW_QUERY_TOKEN` | – | `true` | Deprecation window for `?token=` on audio/export + WS. Set `false` once old frontends are gone. |

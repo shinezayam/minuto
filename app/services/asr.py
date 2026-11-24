@@ -282,6 +282,134 @@ class _ClientError(Exception):
     pass
 
 
+SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
+_SENTENCE_END = (".", "?", "!", "…")
+
+
+def scribe_keyterms(hints: List[str]) -> List[str]:
+    """Scribe-ийн keyterms: тусгай тэмдэгтгүй, ≤50 тэмдэгт, ≤5 үг, ≤1000 ширхэг."""
+    terms = []
+    for h in hints:
+        t = "".join(ch for ch in h if ch not in "<>{}[]\\")[:50].strip()
+        if t and len(t.split()) <= 5 and t not in terms:
+            terms.append(t)
+    return terms[:1000]
+
+
+def scribe_words_to_segments(words: List[dict], max_ms: int) -> List[TranscriptSegment]:
+    """Scribe-ийн үгсийг ≤max_ms сегментүүд болгоно. Яригч солигдох эсвэл өгүүлбэр дуусах цэг дээр таслахыг
+    илүүд үзнэ; хэт урт ганц хүний яриаг (1.5×max_ms) үгийн заагаар таслана. Шошго ("Яригч N") нь бүтэн хурлын
+    хэмжээнд нэг утгатай (анх ярьсан дарааллаар)."""
+    labels: dict = {}
+    segments: List[TranscriptSegment] = []
+    seg_start: Optional[int] = None
+    seg_end = 0
+    turns: List[list] = []  # [[label, [tokens]]]
+
+    def close() -> None:
+        nonlocal seg_start, turns
+        lines = [f"{label}: {''.join(tokens).strip()}" for label, tokens in turns if "".join(tokens).strip()]
+        if lines and seg_start is not None:
+            segments.append(TranscriptSegment(id=f"seg_{len(segments) + 1}", start_ms=seg_start,
+                                              end_ms=max(seg_end, seg_start), text="\n".join(lines)))
+        seg_start, turns = None, []
+
+    for w in words:
+        kind = w.get("type") or "word"
+        if kind == "spacing":
+            if turns:
+                turns[-1][1].append(w.get("text") or " ")
+            continue
+        if kind != "word" or not (w.get("text") or "").strip():
+            continue
+        label = labels.setdefault(w.get("speaker_id") or "speaker_0", f"Яригч {len(labels) + 1}")
+        start = int(round(float(w.get("start") or 0) * 1000))
+        end = int(round(float(w.get("end") or 0) * 1000))
+        if seg_start is not None and end - seg_start > max_ms:
+            last = "".join(turns[-1][1]).rstrip() if turns else ""
+            if label != turns[-1][0] or last.endswith(_SENTENCE_END) or end - seg_start > max_ms * 1.5:
+                close()
+        if seg_start is None:
+            seg_start = start
+        if turns and turns[-1][0] == label:
+            turns[-1][1].append(w["text"])
+        else:
+            turns.append([label, [w["text"]]])
+        seg_end = max(seg_end, end)
+    close()
+    return segments
+
+
+class ScribeASRProvider:
+    """ElevenLabs Scribe: бүтэн файлыг нэг дуудлагаар илгээнэ, яригчийг бүтэн хурлын хэмжээнд ялгана (diarize).
+    Хурлын үеийн шууд бичвэрийг (prefilled) дахин ашиглахгүй: тэр нь зөвхөн дэлгэцэнд, эцсийн бичвэр бүтэн файлаас."""
+
+    name = "scribe"
+
+    def __init__(self) -> None:
+        if not settings.elevenlabs_api_key:
+            raise RuntimeError("ASR_PROVIDER=scribe боловч ELEVENLABS_API_KEY тохируулаагүй байна")
+
+    async def transcribe(
+        self, audio_path: str, on_progress: ProgressCallback = None, context: ASRContext = NO_CONTEXT
+    ) -> List[TranscriptSegment]:
+        saved = context.resume.get(0)
+        if saved and isinstance(saved.get("segments"), list):  # өмнөх оролдлогод дууссан: дахин төлөхгүй
+            return [TranscriptSegment(**s) for s in saved["segments"]]
+        if on_progress:
+            on_progress(0, 1)
+        data: dict = {
+            "model_id": settings.scribe_model,
+            "language_code": "mn",
+            "diarize": "true",
+            "tag_audio_events": "false",
+            "timestamps_granularity": "word",
+        }
+        terms = scribe_keyterms(context.hints)
+        if terms:
+            data["keyterms"] = terms
+        body = await self._post(Path(audio_path), data)
+        segments = scribe_words_to_segments(body.get("words") or [], settings.scribe_segment_sec * 1000)
+        if not segments and (body.get("text") or "").strip():  # үгийн мэдээлэлгүй хариу (ховор)
+            segments = [TranscriptSegment(id="seg_1", start_ms=0, end_ms=0, text=f"Яригч 1: {body['text'].strip()}")]
+        if context.on_chunk:
+            context.on_chunk(0, {"segments": [s.model_dump() for s in segments]})
+        if on_progress:
+            on_progress(1, 1)
+        return segments
+
+    async def transcribe_wav_bytes(self, wav: bytes, context: ASRContext = NO_CONTEXT) -> str:
+        """Хурлын үеийн богино цонх (10-25с): яригч ялгахгүй, зөвхөн текст."""
+        data: dict = {"model_id": settings.scribe_model, "language_code": "mn", "diarize": "false",
+                      "tag_audio_events": "false"}
+        terms = scribe_keyterms(context.hints)
+        if terms:
+            data["keyterms"] = terms
+        body = await self._post_bytes(wav, "window.wav", data, timeout=60)
+        return (body.get("text") or "").strip()
+
+    async def _post(self, path: Path, data: dict) -> dict:
+        with path.open("rb") as fh:
+            return await self._send(data, {"file": (path.name, fh, "application/octet-stream")}, settings.scribe_timeout_sec)
+
+    async def _post_bytes(self, blob: bytes, name: str, data: dict, timeout: int) -> dict:
+        return await self._send(data, {"file": (name, blob, "audio/wav")}, timeout)
+
+    async def _send(self, data: dict, files: dict, timeout: int) -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                res = await client.post(SCRIBE_URL, headers={"xi-api-key": settings.elevenlabs_api_key},
+                                        data=data, files=files)
+        except httpx.HTTPError as e:
+            raise ProviderError(f"Scribe холболтын алдаа: {type(e).__name__}: {e}") from e
+        if res.status_code != 200:
+            raise ProviderError(f"Scribe HTTP {res.status_code}: {res.text[:300]}")
+        try:
+            return res.json()
+        except ValueError as e:
+            raise ProviderError(f"Scribe хариу JSON биш: {res.text[:200]}") from e
+
+
 class WhisperASRProvider:
     """
     Локал OpenAI Whisper (zzzchinguun-ийн хувилбар). Сервер дээр ажилладаг тул гадны API хэрэггүй,
@@ -342,6 +470,8 @@ class WhisperASRProvider:
 
 
 def make_asr_provider() -> ASRProvider:
+    if settings.asr_provider == "scribe":
+        return ScribeASRProvider()
     if settings.asr_provider == "omni":
         return QwenOmniASRProvider()
     if settings.asr_provider == "whisper":

@@ -486,3 +486,205 @@ async def test_disk_full_is_retried_and_provider_text_is_hidden(monkeypatch):
     monkeypatch.setattr(asr_mod.asr_provider, "transcribe", provider_down)
     assert await processing.run("m1", None) is False  # job байхгүй → дахин оролдохгүй
     assert finished[-1].startswith("ASR_FAILED: ") and "10.0.0.5" not in finished[-1]
+
+
+# ---------- ElevenLabs Scribe ----------
+
+def _w(text, start, end, spk="speaker_0"):
+    return {"type": "word", "text": text, "start": start, "end": end, "speaker_id": spk}
+
+
+SP = {"type": "spacing", "text": " "}
+
+
+@pytest.fixture
+def scribe_key(monkeypatch):
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "el-test")
+
+
+def test_scribe_words_to_segments_keeps_meeting_wide_speakers():
+    words = [
+        _w("Сайн", 0.0, 0.5, "speaker_3"), SP, _w("байна", 0.6, 1.0, "speaker_3"), SP, _w("уу.", 1.0, 1.2, "speaker_3"),
+        _w("Сайн.", 2.0, 2.5, "speaker_0"),
+        {"type": "audio_event", "text": "(инээд)", "start": 3, "end": 4},
+        _w("За", 31.0, 31.5, "speaker_3"), SP, _w("эхэлье.", 31.6, 32.0, "speaker_3"),
+        _w("Тийм.", 40.0, 40.5, "speaker_0"),
+    ]
+    segs = asr_mod.scribe_words_to_segments(words, 30_000)
+    assert [s.id for s in segs] == ["seg_1", "seg_2"]
+    assert segs[0].text == "Яригч 1: Сайн байна уу.\nЯригч 2: Сайн."
+    assert (segs[0].start_ms, segs[0].end_ms) == (0, 2500)
+    # Хоёр дахь сегментэд ч мөн адил хүн мөн адил шошготой
+    assert segs[1].text == "Яригч 1: За эхэлье.\nЯригч 2: Тийм." and segs[1].start_ms == 31_000
+
+
+def test_scribe_long_monologue_is_split_at_word_boundary():
+    words = []
+    for i in range(100):  # 100 үг, 1с тутамд, цэггүй
+        words += [_w(f"үг{i}", float(i), i + 0.5), SP]
+    segs = asr_mod.scribe_words_to_segments(words, 30_000)
+    assert len(segs) >= 2 and all(s.end_ms - s.start_ms <= 45_000 for s in segs)
+    assert " ".join(s.text.replace("Яригч 1: ", "") for s in segs).split() == [f"үг{i}" for i in range(100)]
+
+
+async def test_scribe_transcribe_sends_whole_file_and_saves_result(tmp_path, scribe_key, monkeypatch):
+    audio = tmp_path / "uploaded.m4a"
+    audio.write_bytes(b"fake-audio")
+    seen = []
+
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(200, json={"text": "Сайн", "words": [_w("Сайн.", 0.0, 0.5)]})
+
+    _patch_httpx(monkeypatch, handler)
+    saved = {}
+    ctx = asr_mod.ASRContext(hints=["Бат", "e-ID", "<bad>"], on_chunk=lambda k, v: saved.__setitem__(k, v),
+                             prefilled=[{"start_ms": 0, "end_ms": 1000, "text": "шууд"}])
+    segs = await asr_mod.ScribeASRProvider().transcribe(str(audio), context=ctx)
+    assert [s.text for s in segs] == ["Яригч 1: Сайн."]
+    assert len(seen) == 1 and seen[0].headers["xi-api-key"] == "el-test"
+    body = seen[0].content.decode("utf-8", "replace")
+    for part in ('name="diarize"', 'name="language_code"', 'name="keyterms"', "e-ID", "fake-audio"):
+        assert part in body
+    assert "<bad>" not in body
+    assert saved[0]["segments"][0]["text"] == "Яригч 1: Сайн."
+
+    # Дахин оролдлого: хадгалсан үр дүнг ашиглана, дахин төлөхгүй
+    again = await asr_mod.ScribeASRProvider().transcribe(str(audio), context=asr_mod.ASRContext(resume=saved))
+    assert [s.text for s in again] == ["Яригч 1: Сайн."] and len(seen) == 1
+
+
+async def test_scribe_http_error_is_provider_error(tmp_path, scribe_key, monkeypatch):
+    audio = tmp_path / "uploaded.m4a"
+    audio.write_bytes(b"x")
+    _patch_httpx(monkeypatch, lambda req: httpx.Response(401, text="invalid key"))
+    with pytest.raises(asr_mod.ProviderError, match="401"):
+        await asr_mod.ScribeASRProvider().transcribe(str(audio))
+
+
+async def test_scribe_live_window_returns_plain_text(scribe_key, monkeypatch):
+    seen = {}
+
+    def handler(req):
+        seen["body"] = req.content.decode("utf-8", "replace")
+        return httpx.Response(200, json={"text": " Сайн байна уу "})
+
+    _patch_httpx(monkeypatch, handler)
+    provider = asr_mod.ScribeASRProvider()
+    assert asr_mod.supports_live(provider)
+    assert await provider.transcribe_wav_bytes(b"RIFF....") == "Сайн байна уу"
+    assert 'name="diarize"\r\n\r\nfalse' in seen["body"]
+
+
+def test_scribe_requires_key(monkeypatch):
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "")
+    with pytest.raises(RuntimeError, match="ELEVENLABS_API_KEY"):
+        asr_mod.ScribeASRProvider()
+
+
+async def test_minutes_with_scribe_use_global_speaker_names(qwen_key, monkeypatch):
+    monkeypatch.setattr(settings, "asr_provider", "scribe")
+    seen = {}
+
+    def handler(req):
+        seen["system"] = json.loads(req.content)["messages"][0]["content"]
+        return _chat({"title": "Х", "summary": "Т", "speaker_map": {"*": {"Яригч 2": "Бат"}}})
+
+    _patch_httpx(monkeypatch, handler)
+    m = await llm_mod.QwenLLMProvider().generate_minutes(TRANSCRIPT)
+    assert "already consistent across the WHOLE meeting" in seen["system"]
+    assert "LOCALLY" not in seen["system"]
+    assert m.speaker_map == {"seg_1": {"Яригч 2": "Бат"}, "seg_2": {"Яригч 2": "Бат"}}
+
+
+# ---------- Qwen-ийн агуулгын шүүлтүүр (data_inspection_failed) ----------
+
+FILTERED = httpx.Response(400, json={"error": {"code": "data_inspection_failed",
+                                               "message": "Input text data may contain inappropriate content."}})
+LONG = [TranscriptSegment(id=f"seg_{i}", start_ms=(i - 1) * 30_000, end_ms=i * 30_000,
+                          text=("ХОРИОТОЙ үг" if i in (5, 6) else f"Ердийн яриа {i}.")) for i in range(1, 11)]
+
+
+@pytest.fixture(autouse=True)
+def _no_filter_delay(monkeypatch):
+    monkeypatch.setattr(llm_mod, "FILTER_RETRY_DELAY_SEC", 0)
+
+
+def _part_reply(body):
+    """Хэсэг бүрт: тэр хэсэгт байгаа сегментүүдээс сэдэв гаргана."""
+    text = body["messages"][-1]["content"]
+    if text.startswith("Хэсэг 1:"):  # хураангуй нэгтгэх дуудлага
+        return _chat({"summary": "Нэгтгэсэн."})
+    ids = [f"seg_{i}" for i in range(1, 11) if f"[seg_{i} " in text]
+    return _chat({"title": "Х", "summary": f"{ids[0]}-{ids[-1]}", "participants": ["Яригч 1"],
+                  "topics": [{"title": ids[0], "source_segment_ids": ids}]})
+
+
+async def test_flaky_filter_is_retried_without_splitting(qwen_key, monkeypatch):
+    """Шүүлтүүр тогтворгүй: ижил хүсэлт эхэндээ татгалзагдаад дараа нь давдаг. Хуваахгүй, юу ч хасахгүй."""
+    replies = iter([FILTERED, _chat({"title": "Х", "summary": "Бүтэн."})])
+    _patch_httpx(monkeypatch, lambda req: next(replies))
+    m = await llm_mod.QwenLLMProvider().generate_minutes(LONG)
+    assert m.summary == "Бүтэн." and m.omitted_segment_ids == []
+
+
+async def test_long_transcript_rejected_as_whole_is_split_and_merged(qwen_key, monkeypatch):
+    """Бүтэн бичвэр байнга татгалзагдаж, хагас бүр давдаг (бодит хурал дээр ажигласан): юу ч хасахгүй, нэгтгэнэ."""
+    calls = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        calls.append(body)
+        if "[seg_1 " in body["messages"][-1]["content"] and "[seg_10 " in body["messages"][-1]["content"]:
+            return FILTERED
+        return _part_reply(body)
+
+    _patch_httpx(monkeypatch, handler)
+    m = await llm_mod.QwenLLMProvider().generate_minutes(LONG)
+    assert m.omitted_segment_ids == [] and m.summary == "Нэгтгэсэн."
+    assert [t.title for t in m.topics] == ["seg_1", "seg_6"]
+    assert m.topics[1].source_segment_ids == ["seg_6", "seg_7", "seg_8", "seg_9", "seg_10"]
+    assert m.participants == ["Яригч 1"]
+    assert len(calls) == llm_mod.FILTER_RETRIES + 2 + 1  # бүтэн ×3, хагас ×2, нэгтгэл ×1
+
+
+async def test_segment_rejected_alone_is_omitted_and_reported(qwen_key, monkeypatch):
+    def handler(req):
+        body = json.loads(req.content)
+        return FILTERED if "ХОРИОТОЙ" in body["messages"][-1]["content"] else _part_reply(body)
+
+    _patch_httpx(monkeypatch, handler)
+    m = await llm_mod.QwenLLMProvider().generate_minutes(LONG)
+    assert m.omitted_segment_ids == ["seg_5", "seg_6"]
+    assert m.summary.startswith("Нэгтгэсэн.") and "02:00–03:00" in m.summary  # дараалсан 2 хэсэг нэг мужид
+    covered = {i for t in m.topics for i in t.source_segment_ids}
+    assert covered == {f"seg_{i}" for i in (1, 2, 3, 4, 7, 8, 9, 10)}
+
+
+async def test_everything_rejected_fails_clearly(qwen_key, monkeypatch):
+    _patch_httpx(monkeypatch, lambda req: FILTERED)
+    with pytest.raises(ValueError, match="шүүлтүүр"):
+        await llm_mod.QwenLLMProvider().generate_minutes(LONG[:2])
+
+
+async def test_summary_only_is_split_on_filter(qwen_key, monkeypatch):
+    def handler(req):
+        text = json.loads(req.content)["messages"][-1]["content"]
+        if "[seg_1 " in text and "[seg_10 " in text:
+            return FILTERED
+        return _chat({"summary": "Нэгтгэсэн." if text.startswith("Хэсэг 1:") else "Хэсэг."})
+
+    _patch_httpx(monkeypatch, handler)
+    assert await llm_mod.QwenLLMProvider().generate_summary(LONG) == "Нэгтгэсэн."
+
+
+async def test_summary_merge_failure_falls_back_to_joining(qwen_key, monkeypatch):
+    def handler(req):
+        text = json.loads(req.content)["messages"][-1]["content"]
+        if text.startswith("Хэсэг 1:") or ("[seg_1 " in text and "[seg_10 " in text):
+            return FILTERED
+        return _part_reply(json.loads(req.content))
+
+    _patch_httpx(monkeypatch, handler)
+    m = await llm_mod.QwenLLMProvider().generate_minutes(LONG)
+    assert m.summary == "seg_1-seg_5 seg_6-seg_10"

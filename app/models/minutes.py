@@ -115,3 +115,5 @@ class MeetingMinutes(BaseModel):
     speaker_map: Dict[str, Dict[str, str]] = {}
     # Загвараар эхэлсэн хурлын онцлох хэсгүүд (topics/decisions/action_items/open_questions); UI эдгээрийг дээр нь харуулна
     section_order: List[str] = []
+    # Хиймэл оюуны агуулгын шүүлтүүр хүлээж аваагүй тул тэмдэглэлд ороогүй сегментүүд (бичвэрт хэвээр)
+    omitted_segment_ids: List[str] = []

@@ -133,7 +133,7 @@ async def test_live_transcribes_streamed_chunks(tmp_path, fake_asr):
 
 @needs_ffmpeg
 async def test_live_skips_silence(tmp_path, fake_asr):
-    blob = _make_webm(tmp_path / "s.webm", "anullsrc=r=48000:cl=mono:d=10")
+    blob = _make_webm(tmp_path / "s.webm", "anullsrc=r=48000:cl=mono,atrim=duration=10")
     meeting_dir = tmp_path / "m"
     n = _slice_into(meeting_dir, blob, 3)
     lt = LiveTranscriber("m2", meeting_dir)
@@ -276,7 +276,7 @@ async def test_live_saves_windows_and_restart_skips_covered_audio(tmp_path, fake
 
 @needs_ffmpeg
 async def test_live_silence_counts_as_covered(tmp_path, fake_asr):
-    blob = _make_webm(tmp_path / "s.webm", "anullsrc=r=48000:cl=mono:d=10")
+    blob = _make_webm(tmp_path / "s.webm", "anullsrc=r=48000:cl=mono,atrim=duration=10")
     meeting_dir = tmp_path / "m"
     n = _slice_into(meeting_dir, blob, 3)
     lt = LiveTranscriber("m6", meeting_dir)

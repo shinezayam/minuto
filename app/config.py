@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_audio_bucket: str = "meeting-audio-private"
 
-    # ASR: "omni" (Qwen-Omni API) | "whisper" (локал Whisper) | "demo" (тодорхой шошготой хуурамч бичвэр)
+    # ASR: "scribe" (ElevenLabs Scribe) | "omni" (Qwen-Omni API) | "whisper" (локал Whisper) | "demo" (тодорхой шошготой хуурамч бичвэр)
     asr_provider: str = "demo"
     asr_model_id: str = ""
     asr_device: str = "auto"
@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     omni_model: str = "qwen3-omni-flash"
     omni_chunk_sec: int = 30
     asr_concurrency: int = 12  # 30с хэсгийг зэрэг илгээх тоо; 6 мин бичлэг: 4 → 306с, 12 → 38с
+    # ASR_PROVIDER=scribe үед: бүтэн файлыг нэг дуудлагаар, яригчийг бүтэн хурлын хэмжээнд ялгана
+    elevenlabs_api_key: str = ""
+    scribe_model: str = "scribe_v3"
+    scribe_timeout_sec: int = 1800  # 1 цагийн бичлэг ~8 мин
+    scribe_segment_sec: int = 30  # бичвэрийн сегментийн дээд урт (эх сурвалж, иш татах нэгж)
     # ASR_PROVIDER=whisper үед
     whisper_model: str = "medium"
 
@@ -110,6 +115,9 @@ class Settings(BaseSettings):
         # Render зэрэг dashboard-д утгыг хашилттай ("sk-...") эсвэл зайтай хуулж оруулбал токен буруу болно
         self.qwen_api_key = self.qwen_api_key.strip().strip("\"'").strip()
         self.qwen_base_url = self.qwen_base_url.strip().strip("\"'").strip()
+        self.elevenlabs_api_key = self.elevenlabs_api_key.strip().strip("\"'").strip()
+        if not self.scribe_model:
+            self.scribe_model = "scribe_v3"
         # .env-д "QWEN_MODEL=" гэх мэт хоосон үлдсэн бол default-ыг хэрэглэнэ
         if not self.qwen_base_url:
             self.qwen_base_url = DEFAULT_QWEN_BASE_URL

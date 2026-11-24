@@ -28,6 +28,9 @@ services:
       # Нууц — Render dashboard дээр гараар оруулна, git-д бичихгүй
       - key: QWEN_API_KEY
         sync: false
+      # ASR_PROVIDER=scribe болгохоос ӨМНӨ dashboard дээр оруулна (байхгүй бол сервер асахгүй)
+      - key: ELEVENLABS_API_KEY
+        sync: false
       # Хурал, хэрэглэгчийн мэдээлэл — доорх Postgres-д хадгалагдана
       - key: DATABASE_URL
         fromDatabase:
