@@ -254,6 +254,47 @@ async def test_qwen_minutes_repairs_invalid_json(qwen_key, monkeypatch):
     assert m.title == "Х"
 
 
+async def test_qwen_minutes_tolerates_messy_json(qwen_key, monkeypatch):
+    """Урт бодит хурал дээр загвар schema-аас бага зэрэг зөрдөг: энэ нь бүтэн хурлын бичгийг унагахгүй."""
+    messy = {
+        "title": "Хурал",
+        "summary": ["Нэгдүгээр өгүүлбэр.", "Хоёрдугаар өгүүлбэр."],
+        "topics": ["Төсөв", {"title": None}, {"title": "Хуваарь", "description": None, "source_segment_ids": "seg_1"}],
+        "decisions": [{"text": "1-нд өгнө", "status": "Rejected", "confidence": "0.9", "evidence": [{"quote": "x"}],
+                       "source_segment_ids": ["seg_1"]}],
+        "action_items": [{"task": "Тайлан", "owner": ["Бат", "Дорж"], "due_date": {"text": "Баасан"}, "status": None,
+                          "confidence": 7}],
+        "open_questions": None,
+        "participants": ["Бат", None, 3],
+        "qa": [{"question": "Хэзээ?", "answer": None}],
+        "speaker_map": {"seg_1": {"Яригч 1": "Бат", "Яригч 2": None}, "seg_2": None},
+    }
+    _patch_httpx(monkeypatch, lambda req: _chat("```json\n" + json.dumps(messy, ensure_ascii=False) + "\n```"))
+    m = await llm_mod.QwenLLMProvider().generate_minutes(TRANSCRIPT)
+    assert m.summary == "Нэгдүгээр өгүүлбэр. Хоёрдугаар өгүүлбэр."
+    assert [t.title for t in m.topics] == ["Төсөв", "Хуваарь"]
+    assert m.topics[1].source_segment_ids == ["seg_1"]
+    assert m.decisions[0].status == "rejected" and m.decisions[0].confidence == 0.9
+    assert m.action_items[0].owner == "Бат, Дорж" and m.action_items[0].due_date == "Баасан"
+    assert m.action_items[0].status == "open" and m.action_items[0].confidence == 1.0
+    assert m.open_questions == [] and m.participants == ["Бат", "3"]
+    assert m.qa[0].question == "Хэзээ?"
+
+
+async def test_qwen_minutes_retry_does_not_resend_bad_reply(qwen_key, monkeypatch):
+    sent = []
+    replies = iter(["[1, 2]", json.dumps({"title": "Х", "summary": "Т"})])
+
+    def handler(req):
+        sent.append(json.loads(req.content)["messages"])
+        return _chat(next(replies))
+
+    _patch_httpx(monkeypatch, handler)
+    m = await llm_mod.QwenLLMProvider().generate_minutes(TRANSCRIPT)
+    assert m.title == "Х"
+    assert len(sent[1]) == 3 and all(msg["role"] != "assistant" for msg in sent[1])
+
+
 async def test_qwen_minutes_gives_up(qwen_key, monkeypatch):
     _patch_httpx(monkeypatch, lambda req: _chat("still not json"))
     with pytest.raises(asr_mod.ProviderError):
