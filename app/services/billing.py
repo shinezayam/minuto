@@ -8,6 +8,8 @@
     (нэг удаа хасах руу орж болно); upload нь үлдэгдлээс урт бол татгалзана (файл хэрэглэгчид байгаа).
   * Team идэвхтэй workspace-ийн хурал → workspace-ийн минут; бусад үед хурлын ЭЗНИЙ хувийн минут.
   * Хэрэглээгүй минут дараагийн хугацаанд шилжихгүй.
+  * Superadmin (Render-ийн ADMIN_EMAILS дахь үндсэн админ): хугацаагүй, хязгааргүй минут. Тэдний хурал workspace-д
+    байсан ч workspace-ийн минутыг хасахгүй. Сайтаас нэмсэн админд (admin_grants) энэ эрх хамаарахгүй.
 Аюулгүй байдал: shadow горимд billing-ийн аливаа алдаа боловсруулалтад нөлөөлөхгүй (бүгд log + swallow).
 """
 from __future__ import annotations
@@ -29,13 +31,29 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import (
-    ContactRequest, Meeting, PaymentOrder, Plan, ProcessingJob, Subscription, UsageEvent, Workspace, WorkspaceMember,
+    ContactRequest, Meeting, PaymentOrder, Plan, ProcessingJob, Subscription, UsageEvent, User, Workspace, WorkspaceMember,
     session_scope,
 )
+from app.services import admins
 
 logger = logging.getLogger(__name__)
 
 FREE_PLAN = "free"
+SUPERADMIN_PLAN = "superadmin"  # DB-д байхгүй, зөвхөн ADMIN_EMAILS-ээр тодорхойлогдоно
+UNLIMITED_MINUTES = 1_000_000_000  # superadmin-ий "үлдэгдэл": хэзээ ч хүрэхгүй
+
+
+def _superadmin_plan() -> Plan:
+    return Plan(code=SUPERADMIN_PLAN, name="Superadmin", kind="paid", minutes=None, period_days=None,
+                price_mnt=None, scope="user")
+
+
+def is_superadmin(s: Session, user_id: Optional[str]) -> bool:
+    """Render-ийн ADMIN_EMAILS-д и-мэйл нь байгаа хэрэглэгч (admins.is_owner). Сайтаас нэмсэн админ биш."""
+    if not user_id or not admins.owner_emails():
+        return False
+    u = s.get(User, user_id)
+    return u is not None and admins.is_owner(u.email)
 
 
 def _now() -> datetime:
@@ -154,7 +172,10 @@ def _team_subscription(s: Session, workspace_id: Optional[str], now: datetime) -
 
 
 def scope_for_meeting(s: Session, meeting: Meeting, now: datetime) -> Tuple[str, str]:
-    """Team (эсвэл workspace-ийн бусад идэвхтэй багц) байвал workspace, үгүй бол хурлын эзэн."""
+    """Superadmin-ий хурал → эзний хувийн (хязгааргүй). Team (эсвэл workspace-ийн бусад идэвхтэй багц) байвал
+    workspace, үгүй бол хурлын эзэн."""
+    if is_superadmin(s, meeting.owner_id):
+        return "user", meeting.owner_id
     if meeting.workspace_id and _team_subscription(s, meeting.workspace_id, now) is not None:
         return "workspace", meeting.workspace_id
     return "user", meeting.owner_id
@@ -168,25 +189,31 @@ class Balance:
     subscription: Optional[Subscription]
     allowance: int
     used: int
+    unlimited: bool = False
 
     @property
     def remaining(self) -> int:
+        if self.unlimited:
+            return UNLIMITED_MINUTES
         return self.allowance - self.used
 
 
-def _used(s: Session, scope_type: str, scope_id: str, subscription_id: Optional[str]) -> int:
+def _used(s: Session, scope_type: str, scope_id: str, subscription_id: Optional[str], plan_code: str = FREE_PLAN) -> int:
     q = select(func.coalesce(func.sum(UsageEvent.billable_minutes), 0)).where(
         UsageEvent.scope_type == scope_type, UsageEvent.scope_id == scope_id, UsageEvent.state.in_(("reserved", "debited")),
     )
     if subscription_id:
         q = q.where(UsageEvent.subscription_id == subscription_id)
     else:
-        q = q.where(UsageEvent.plan_code == FREE_PLAN)
+        q = q.where(UsageEvent.plan_code == plan_code)
     return int(s.scalar(q) or 0)
 
 
 def balance(s: Session, scope_type: str, scope_id: str, now: Optional[datetime] = None) -> Balance:
     now = now or _now()
+    if scope_type == "user" and is_superadmin(s, scope_id):
+        return Balance(scope_type, scope_id, _superadmin_plan(), None, 0,
+                       _used(s, scope_type, scope_id, None, SUPERADMIN_PLAN), unlimited=True)
     sub = _roll_periods(s, scope_type, scope_id, now)
     if sub is not None:
         plan = s.get(Plan, sub.plan_code)
@@ -220,6 +247,7 @@ def summary(user_id: str, workspace_id: Optional[str] = None) -> dict:
             "plan": plan_dict(b.plan),
             "subscription": _sub_dict(b.subscription),
             "minutes": {"allowance": b.allowance, "used": b.used, "remaining": b.remaining},
+            "unlimited": b.unlimited,
         }
 
 

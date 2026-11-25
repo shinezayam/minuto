@@ -46,8 +46,8 @@ JWT (`JWT_SECRET`, `JWT_TTL_DAYS=30`) `Authorization: Bearer` header-ээр.
 
 | Түвшин | Хэн | Эрх |
 |---|---|---|
-| Үндсэн админ | `ADMIN_EMAILS` env | Бүгд + бусад админыг нэмэх/хасах |
-| Нэмэгдсэн админ | `admin_grants` хүснэгт | Enterprise хүсэлт, санал хүсэлт |
+| Үндсэн админ = **superadmin** | `ADMIN_EMAILS` env (Render) | Бүгд + бусад админыг нэмэх/хасах + хугацаагүй, хязгааргүй минут (`billing.is_superadmin`; хурал нь workspace-д байсан ч workspace-ийн минутыг хасахгүй) |
+| Нэмэгдсэн админ | `admin_grants` хүснэгт | Enterprise хүсэлт, санал хүсэлт. Минут нь өөрийн багцаар (superadmin биш) |
 
 Endpoint: `/api/admin/me`, `/admins`, `/contact-requests`.
 

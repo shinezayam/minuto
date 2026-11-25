@@ -197,6 +197,52 @@ async def test_enforce_exhausted_then_blocked(client, duration, monkeypatch):
     assert r.status_code == 402 and r.json()["detail"].startswith("MINUTES_EXHAUSTED")
 
 
+async def _login_as(anon_client, email: str) -> None:
+    auth = await register(anon_client, email)
+    anon_client.headers["Authorization"] = f"Bearer {auth['token']}"
+    anon_client.auth_token = auth["token"]
+
+
+async def test_superadmin_has_unlimited_minutes(anon_client, duration, monkeypatch):
+    metering(monkeypatch, "enforce")
+    monkeypatch.setattr(settings, "admin_emails", "Boss@Minuto.mn")
+    await _login_as(anon_client, "boss@minuto.mn")
+    duration["sec"] = 3 * 3600  # Free-ийн 30 минутаас хамаагүй урт (бичлэгийн дээд хэмжээ 4 цаг)
+    for salt in (1, 2):
+        assert (await process(anon_client, await upload_meeting(anon_client, salt=salt))).status_code == 202
+    assert all(ev.plan_code == "superadmin" and ev.state == "debited" for ev in events())
+    me = (await anon_client.get("/api/billing/me")).json()
+    assert me["unlimited"] is True and me["plan"]["code"] == "superadmin" and me["subscription"] is None
+    assert me["minutes"]["used"] == 360 and me["minutes"]["remaining"] >= 10**9
+
+
+async def test_superadmin_meetings_never_use_workspace_minutes(anon_client, duration, monkeypatch):
+    metering(monkeypatch, "enforce")
+    monkeypatch.setattr(settings, "admin_emails", "boss@minuto.mn")
+    await _login_as(anon_client, "boss@minuto.mn")
+    ws = (await anon_client.post("/api/workspaces", json={"name": "Баг", "workspace_type": "organization"})).json()
+    uid = user_id_of(anon_client)
+    with session_scope() as s:
+        meeting = Meeting(owner_id=uid, workspace_id=ws["id"], title="Т")
+        s.add(meeting)
+        s.flush()
+        assert billing.scope_for_meeting(s, meeting, billing._now()) == ("user", uid)
+
+
+async def test_added_admins_and_normal_users_keep_plan_limits(client, duration, monkeypatch):
+    metering(monkeypatch, "enforce")
+    monkeypatch.setattr(settings, "admin_emails", "boss@minuto.mn")
+    from app.services import admins
+
+    me_email = (await client.get("/api/auth/me")).json()["email"]
+    admins.grant(me_email, by="boss@minuto.mn")  # сайтаас нэмсэн админ: superadmin биш
+    me = (await client.get("/api/billing/me")).json()
+    assert me["unlimited"] is False and me["plan"]["code"] == "free" and me["minutes"]["remaining"] == 30
+    duration["sec"] = 31 * 60
+    r = await process(client, await upload_meeting(client))
+    assert r.status_code == 402
+
+
 async def test_enforce_live_recording_is_processed_with_overdraft(client, duration, monkeypatch):
     """Шууд бичлэгийг дахин бичих боломжгүй тул хэзээ ч түгжихгүй — нэг удаа хасах руу орно."""
     metering(monkeypatch, "enforce")
