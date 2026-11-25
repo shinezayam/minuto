@@ -2177,6 +2177,54 @@
         ]
       }
     },
+    "/api/admin/ai-usage": {
+      "get": {
+        "description": "Гадны AI API-ийн (Scribe, Qwen) зардал: нийт, зориулалт, өдөр, хамгийн их зардалтай хэрэглэгчид.",
+        "operationId": "ai_usage_report_api_admin_ai_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ai Usage Report Api Admin Ai Usage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ai Usage Report",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/admin/contact-requests": {
       "get": {
         "operationId": "list_contact_requests_api_admin_contact_requests_get",

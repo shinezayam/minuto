@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     scribe_model: str = "scribe_v3"
     scribe_timeout_sec: int = 1800  # 1 цагийн бичлэг ~8 мин
     scribe_segment_sec: int = 30  # бичвэрийн сегментийн дээд урт (эх сурвалж, иш татах нэгж)
+    # Гадны AI API-ийн үнэ (админы "AI зардал" хуудас, ai_usage.cost_usd). Үнэ өөрчлөгдвөл env-ээр солино.
+    price_scribe_usd_per_hour: float = 0.20
+    price_scribe_keyterms_usd_per_hour: float = 0.05
+    price_llm_input_usd_per_m: float = 2.0  # qwen3.8-max, 1M оролтын токен
+    price_llm_output_usd_per_m: float = 6.0
+    usd_to_mnt: float = 3600.0
     # ASR_PROVIDER=whisper үед
     whisper_model: str = "medium"
 

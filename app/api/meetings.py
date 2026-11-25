@@ -29,7 +29,7 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services import live_transcriber, meeting_store, processing, templates, vocabulary
-from app.services import audio_store, billing, jobs, minutes_review, transcript_edit
+from app.services import ai_usage, audio_store, billing, jobs, minutes_review, transcript_edit
 from app.services import upload_guard as guard
 from app.services.audio_utils import analyze_audio_quality, find_meeting_audio, probe_audio_error
 from app.services import auth as auth_service
@@ -333,7 +333,8 @@ async def regenerate_summary(meeting_id: str, user: UserResponse = Depends(curre
     try:
         # Зөвхөн хураангуйг (богино дуудлага) шинэчилнэ; бусад хэсэг хөндөгдөхгүй
         ctx = meeting_store.get_meeting_context(meeting_id)
-        summary = await llm_mod.llm_provider.generate_summary(transcript, language=ctx["language"])
+        with ai_usage.scope(meeting_id=meeting_id, llm_purpose="llm_summary"):
+            summary = await llm_mod.llm_provider.generate_summary(transcript, language=ctx["language"])
 
         current_minutes = meeting_store.get_meeting_minutes(meeting_id)
         if current_minutes:
@@ -420,7 +421,8 @@ async def generate_topics(meeting_id: str, user: UserResponse = Depends(current_
     from app.services.topic_segmentation import segment_topics
     
     segments = [TranscriptSegment(**s) for s in transcript]
-    topics = await segment_topics(segments)
+    with ai_usage.scope(meeting_id=meeting_id, llm_purpose="llm_topics"):
+        topics = await segment_topics(segments)
     
     return {
         "meeting_id": meeting_id,

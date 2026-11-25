@@ -13,6 +13,7 @@ import httpx
 
 from app.config import settings
 from app.models.minutes import TranscriptSegment
+from app.services import ai_usage
 from app.services.llm import ProviderError
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ async def segment_topics(transcript: List[TranscriptSegment]) -> List[TopicSegme
             )
             resp.raise_for_status()
             data = resp.json()
+            await ai_usage.record_llm(data.get("usage"), provider="qwen", model=settings.qwen_model, purpose="llm_topics")
             content = data["choices"][0]["message"]["content"]
             
             # Parse response

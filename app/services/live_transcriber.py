@@ -27,7 +27,7 @@ from typing import Awaitable, Callable, Dict, List, Optional, Set
 
 from app.config import settings
 from app.services import asr as asr_mod
-from app.services import vocabulary
+from app.services import ai_usage, vocabulary
 from app.services.audio_utils import ffmpeg_exe
 
 logger = logging.getLogger(__name__)
@@ -291,7 +291,8 @@ class LiveTranscriber:
             await asyncio.to_thread(self._save_window, start_ms, end_ms, "")  # чимээгүй: хамрагдсан гэж үзнэ
             return
         try:
-            raw = await provider.transcribe_wav_bytes(pcm_to_wav(pcm), context=self._asr_context)  # type: ignore[attr-defined]
+            with ai_usage.scope(meeting_id=self.meeting_id):
+                raw = await provider.transcribe_wav_bytes(pcm_to_wav(pcm), context=self._asr_context)  # type: ignore[attr-defined]
         except Exception as e:  # noqa: BLE001 — шууд бичвэрийн алдаа бичлэгийг зогсоохгүй
             # Хадгалахгүй: хурлын дараа энэ завсрыг дахин текст болгоно
             logger.warning("meeting %s: live ASR failed: %s", self.meeting_id, e)

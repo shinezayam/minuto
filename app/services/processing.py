@@ -16,7 +16,7 @@ from app.services import llm as llm_mod
 from app.models.minutes import TranscriptSegment
 from app.services import meeting_store, vocabulary
 from app.services.asr import ProviderError
-from app.services import audio_store, jobs
+from app.services import ai_usage, audio_store, jobs
 from app.services.audio_utils import find_meeting_audio
 from app.services.speakers import apply_speaker_map
 from app.services.live_transcriber import load_windows
@@ -42,6 +42,12 @@ def is_live_recording(meeting_id: str) -> bool:
 
 
 async def run(meeting_id: str, job=None) -> bool:
+    """Боловсруулалтыг ажиллуулна. Энэ хурлын AI дуудлагууд (Scribe, Qwen) ai_usage-д энэ хурлаар бүртгэгдэнэ."""
+    with ai_usage.scope(meeting_id=meeting_id, llm_purpose="llm_minutes"):
+        return await _run(meeting_id, job)
+
+
+async def _run(meeting_id: str, job=None) -> bool:
     """Боловсруулалтыг ажиллуулна. Амжилттай бол True. job өгвөл ASR хэсгүүдийг хадгалж, provider-ийн түр алдаанд RetryLater шиднэ."""
     stage = "transcribing"
     try:

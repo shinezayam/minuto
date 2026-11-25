@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.db import ContactRequest, session_scope
 from app.models.schemas import UserResponse
-from app.services import admins
+from app.services import admins, ai_usage
 from app.services.auth import current_user
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -53,6 +53,12 @@ def _dict(r: ContactRequest) -> dict:
 @router.get("/me")
 def admin_me(user: UserResponse = Depends(current_user)) -> dict:
     return {"is_admin": is_admin(user), "is_owner": admins.is_owner(user.email)}
+
+
+@router.get("/ai-usage")
+def ai_usage_report(days: int = Query(default=30, ge=1, le=365), _: UserResponse = Depends(require_admin)) -> dict:
+    """Гадны AI API-ийн (Scribe, Qwen) зардал: нийт, зориулалт, өдөр, хамгийн их зардалтай хэрэглэгчид."""
+    return ai_usage.report(days)
 
 
 @router.get("/admins")

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.models.minutes import MeetingMinutes, TranscriptSegment
 from app.services.minutes_verify import verify_minutes
+from app.services import ai_usage
 from app.services.asr import ProviderError
 
 logger = logging.getLogger(__name__)
@@ -557,6 +558,7 @@ class QwenLLMProvider:
             raise ProviderError(f"Qwen хариуны бүтэц буруу: {res.text[:300]}") from e
         if choice.get("finish_reason") == "length":
             logger.warning("Qwen хариу max_tokens-д хүрч тасарсан (usage=%s)", body.get("usage"))
+        await ai_usage.record_llm(body.get("usage"), provider="qwen", model=settings.qwen_model)
         return content
 
 

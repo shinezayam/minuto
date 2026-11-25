@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import shutil
+import wave
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Protocol
@@ -14,6 +15,7 @@ import httpx
 
 from app.config import settings
 from app.models.minutes import TranscriptSegment
+from app.services import ai_usage
 from app.services.audio_utils import extract_wav, to_flac, wav_bytes_duration_ms
 
 logger = logging.getLogger(__name__)
@@ -369,6 +371,9 @@ class ScribeASRProvider:
         if terms:
             data["keyterms"] = terms
         body = await self._post(Path(audio_path), data)
+        ends = [w.get("end") for w in body.get("words") or [] if isinstance(w, dict) and isinstance(w.get("end"), (int, float))]
+        await ai_usage.record_asr(max(ends, default=0.0), live=False, keyterms=bool(terms), provider="scribe",
+                                  model=settings.scribe_model)
         segments = scribe_words_to_segments(body.get("words") or [], settings.scribe_segment_sec * 1000)
         if not segments and (body.get("text") or "").strip():  # үгийн мэдээлэлгүй хариу (ховор)
             segments = [TranscriptSegment(id="seg_1", start_ms=0, end_ms=0, text=f"Яригч 1: {body['text'].strip()}")]
@@ -386,6 +391,11 @@ class ScribeASRProvider:
         if terms:
             data["keyterms"] = terms
         body = await self._post_bytes(wav, "window.wav", data, timeout=60)
+        try:
+            seconds = wav_bytes_duration_ms(wav) / 1000
+        except (wave.Error, EOFError, ZeroDivisionError):  # уншигдахгүй толгой: зардлыг 0 гэж бүртгэнэ
+            seconds = 0.0
+        await ai_usage.record_asr(seconds, live=True, keyterms=bool(terms), provider="scribe", model=settings.scribe_model)
         return (body.get("text") or "").strip()
 
     async def _post(self, path: Path, data: dict) -> dict:
