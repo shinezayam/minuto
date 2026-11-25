@@ -4,8 +4,10 @@
   * Нэгж = боловсруулсан аудионы урт, хурал бүрээр минут руу ДЭЭШ бүхэлчилнэ (min 1). Free = нэг удаагийн 60 минут.
   * Боловсруулалт эхлэхэд reserve, бичвэр хадгалагдвал debit (хураангуй унасан ч), бичвэргүй дуусвал release.
   * Ижил аудиог дахин боловсруулах үнэгүй (meeting + SHA-256 fingerprint).
-  * Минут дууссан: шинэ upload / шинэ бичлэг эхлэхгүй. Дууссан ШУУД бичлэгийг боловсруулахыг хэзээ ч хаахгүй
-    (нэг удаа хасах руу орж болно); upload нь үлдэгдлээс урт бол татгалзана (файл хэрэглэгчид байгаа).
+  * Минут дууссан: шинэ upload / шинэ бичлэг эхлэхгүй. Эхэлсэн ШУУД бичлэг хэзээ ч тасрахгүй (хурлыг дахин бичих
+    боломжгүй) — үлдэгдэлд хүрмэгц зөвхөн шууд бичвэр зогсоно (recording_limit_ms, websocket.py).
+    Боловсруулалт: upload эсвэл шууд бичлэг үлдэгдлээс урт бол татгалзана (аудио хадгалагдсан хэвээр; багц сунгаад
+    дахин боловсруулна). Шууд бичлэгт LIVE_GRACE_MINUTES хүртэлх хэтрэлтийг зөвшөөрнө (бүхэлчлэл, сүүлийн хэсэг).
   * Team идэвхтэй workspace-ийн хурал → workspace-ийн минут; бусад үед хурлын ЭЗНИЙ хувийн минут.
   * Хэрэглээгүй минут дараагийн хугацаанд шилжихгүй.
   * Superadmin (Render-ийн ADMIN_EMAILS дахь үндсэн админ): хугацаагүй, хязгааргүй минут. Тэдний хурал workspace-д
@@ -41,6 +43,7 @@ logger = logging.getLogger(__name__)
 FREE_PLAN = "free"
 SUPERADMIN_PLAN = "superadmin"  # DB-д байхгүй, зөвхөн ADMIN_EMAILS-ээр тодорхойлогдоно
 UNLIMITED_MINUTES = 1_000_000_000  # superadmin-ий "үлдэгдэл": хэзээ ч хүрэхгүй
+LIVE_GRACE_MINUTES = 1  # шууд бичлэг үлдэгдлээс ийм хэмжээгээр хэтэрвэл боловсруулсаар (нэг удаа хасах)
 
 
 def _superadmin_plan() -> Plan:
@@ -335,8 +338,8 @@ def _reserve(meeting_id: str, actor_user_id: Optional[str], shadow: bool) -> Opt
             decision, reason = "allowed", "duration unknown: not charged"
         elif minutes <= remaining:
             decision, reason = "allowed", None
-        elif facts["source"] == "live":
-            # Дахин бичиж болохгүй бичлэгийг хэзээ ч түгжихгүй — нэг удаа хасах руу орно
+        elif facts["source"] == "live" and remaining > 0 and minutes <= remaining + LIVE_GRACE_MINUTES:
+            # Бүхэлчлэл / сүүлийн хэсгийн бага зэргийн хэтрэлт — нэг удаа хасах руу орно
             decision, reason = ("would_overdraft" if shadow else "overdraft"), f"needs {minutes}, has {remaining}"
         else:
             decision, reason = "would_block", f"needs {minutes}, has {remaining}"
@@ -447,6 +450,26 @@ def check_can_start_recording(meeting_id: str, user_id: str) -> None:
         scope_type, scope_id = scope_for_meeting(s, meeting, now)
         if balance(s, scope_type, scope_id, now).remaining <= 0:
             raise BillingBlocked("MINUTES_EXHAUSTED", "Таны минут дууссан байна. Багцаа сунгах эсвэл ахиулна уу.")
+
+
+def recording_limit_ms(meeting_id: str) -> Optional[int]:
+    """Шууд бичлэгийн дээд урт (мс): хурлын хүрээний үлдэгдэл + энэ хуралд аль хэдийн тооцсон минут
+    (дахин эхлүүлсэн хурал). None = хязгааргүй (enforce биш, эсвэл superadmin)."""
+    if not enforcing():
+        return None
+    with session_scope() as s:
+        meeting = s.get(Meeting, meeting_id)
+        if meeting is None:
+            return None
+        now = _now()
+        scope_type, scope_id = scope_for_meeting(s, meeting, now)
+        b = balance(s, scope_type, scope_id, now)
+        if b.unlimited:
+            return None
+        already = int(s.scalar(select(func.coalesce(func.sum(UsageEvent.billable_minutes), 0)).where(
+            UsageEvent.meeting_id == meeting_id, UsageEvent.state.in_(("reserved", "debited")),
+        )) or 0)
+        return max(0, b.remaining + already) * 60_000
 
 
 # ---------------------------------------------------------------- Захиалга, төлбөр

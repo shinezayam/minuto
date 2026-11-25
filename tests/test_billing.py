@@ -243,19 +243,36 @@ async def test_added_admins_and_normal_users_keep_plan_limits(client, duration, 
     assert r.status_code == 402
 
 
-async def test_enforce_live_recording_is_processed_with_overdraft(client, duration, monkeypatch):
-    """Шууд бичлэгийг дахин бичих боломжгүй тул хэзээ ч түгжихгүй — нэг удаа хасах руу орно."""
-    metering(monkeypatch, "enforce")
-    duration["sec"] = 50 * 60
+async def _live_meeting(client) -> str:
     mid = (await client.post("/api/meetings", json={"title": "Шууд"})).json()["id"]
     d = processing.meeting_dir(mid)
     d.mkdir(parents=True, exist_ok=True)
     (d / "000000.wav").write_bytes(wav_bytes())  # шууд бичлэгийн хэсэг
+    return mid
+
+
+async def test_enforce_live_recording_over_the_balance_waits_for_renewal(client, duration, monkeypatch):
+    """Шууд бичлэг тасраагүй ч үлдэгдлээс урт бол боловсруулахгүй: хурал "багц сунгах" төлөвт хадгалагдана."""
+    metering(monkeypatch, "enforce")
+    duration["sec"] = 38 * 60  # Free 30 минут
+    mid = await _live_meeting(client)
+    r = await process(client, mid)
+    assert r.status_code == 402 and r.json()["detail"].startswith("MINUTES_INSUFFICIENT")
+    assert events(mid) == []
+    m = (await client.get(f"/api/meetings/{mid}")).json()
+    assert m["status"] == "failed" and m["processing_error"].startswith("MINUTES_INSUFFICIENT")
+    assert processing.has_audio(mid)  # аудио хадгалагдсан: багц сунгаад дахин боловсруулна
+
+
+async def test_enforce_live_recording_small_overshoot_is_processed(client, duration, monkeypatch):
+    """Бүхэлчлэл / сүүлийн хэсгийн 1 минут хүртэлх хэтрэлтийг нэг удаа хасна."""
+    metering(monkeypatch, "enforce")
+    duration["sec"] = 30 * 60 + 20  # → 31 минут, үлдэгдэл 30
+    mid = await _live_meeting(client)
     assert (await process(client, mid)).status_code == 202
     [ev] = events(mid)
-    assert (ev.source, ev.decision, ev.billable_minutes) == ("live", "overdraft", 50)
-    me = (await client.get("/api/billing/me")).json()
-    assert me["minutes"]["remaining"] == -20
+    assert (ev.source, ev.decision, ev.billable_minutes) == ("live", "overdraft", 31)
+    assert (await client.get("/api/billing/me")).json()["minutes"]["remaining"] == -1
 
 
 def test_concurrent_reserves_never_exceed_the_allowance(monkeypatch, duration):

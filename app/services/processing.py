@@ -32,6 +32,15 @@ def has_audio(meeting_id: str) -> bool:
     return d.is_dir() and any(p.name.startswith("uploaded") or p.name[:6].isdigit() for p in d.iterdir())
 
 
+def is_live_recording(meeting_id: str) -> bool:
+    """Аудио нь шууд бичлэгийн хэсгүүд (upload биш) эсэх — billing._audio_facts-тай ижил дүрэм."""
+    d = meeting_dir(meeting_id)
+    if not d.is_dir():
+        return False
+    names = [p.name for p in d.iterdir()]
+    return not any(n.startswith("uploaded") for n in names) and any(n[:6].isdigit() for n in names)
+
+
 async def run(meeting_id: str, job=None) -> bool:
     """Боловсруулалтыг ажиллуулна. Амжилттай бол True. job өгвөл ASR хэсгүүдийг хадгалж, provider-ийн түр алдаанд RetryLater шиднэ."""
     stage = "transcribing"

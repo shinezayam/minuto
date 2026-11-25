@@ -190,3 +190,42 @@ async def test_ws_refuses_when_disk_full(client: AsyncClient, monkeypatch):
     monkeypatch.setattr(settings, "min_free_disk_bytes", 10**18)
     with TestClient(app) as c, c.websocket_connect(f"/ws/meetings/{mid}/audio?token={token}") as ws:
         assert ws.receive_json()["code"] == "STORAGE_FULL"
+
+
+async def test_ws_keeps_recording_but_stops_live_transcript_when_minutes_run_out(client: AsyncClient, monkeypatch):
+    monkeypatch.setattr(settings, "billing_metering", "enforce")  # Free = 30 минут
+    stopped = []
+
+    async def fake_stop(meeting_id):
+        stopped.append(meeting_id)
+
+    from app.services import live_transcriber
+    monkeypatch.setattr(live_transcriber, "stop", fake_stop)
+    mid, token = await _ws_setup(client)
+    with TestClient(app) as c, c.websocket_connect(f"/ws/meetings/{mid}/audio?token={token}") as ws:
+        ws.receive_json()  # recording.ready
+        _send_chunk(ws, 0, ts=26 * 60_000)  # 4 минут үлдлээ → анхааруулга
+        low = _recv_until(ws, {"minutes.low"})
+        assert low["type"] == "minutes.low" and low["remaining_ms"] == 4 * 60_000
+        assert _recv_until(ws, {"audio.ack"})["sequence"] == 0
+        _send_chunk(ws, 1, ts=30 * 60_000 + 3000)  # хэтэрлээ: бичлэг үргэлжилнэ
+        assert _recv_until(ws, {"minutes.exhausted"})["type"] == "minutes.exhausted"
+        assert _recv_until(ws, {"audio.ack"})["sequence"] == 1
+        _send_chunk(ws, 2, ts=30 * 60_000 + 6000)
+        assert _recv_until(ws, {"audio.ack"})["sequence"] == 2
+    assert stopped == [mid]
+    d = processing.meeting_dir(mid)
+    assert sorted(p.name for p in d.iterdir() if p.name[:6].isdigit()) == ["000000.webm", "000001.webm", "000002.webm"]
+
+
+async def test_ws_minute_limit_ignores_metering_off_and_superadmin(client: AsyncClient, monkeypatch):
+    from app.services import billing
+
+    mid, token = await _ws_setup(client)
+    monkeypatch.setattr(settings, "billing_metering", "shadow")
+    assert billing.recording_limit_ms(mid) is None
+    monkeypatch.setattr(settings, "billing_metering", "enforce")
+    assert billing.recording_limit_ms(mid) == 30 * 60_000
+    me = (await client.get("/api/auth/me")).json()["email"]
+    monkeypatch.setattr(settings, "admin_emails", me)
+    assert billing.recording_limit_ms(mid) is None

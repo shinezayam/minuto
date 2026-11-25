@@ -459,6 +459,9 @@ async def process_meeting(meeting_id: str, user: UserResponse = Depends(current_
     try:
         usage_id = await asyncio.to_thread(billing.reserve, meeting_id, user.id)
     except billing.BillingBlocked as e:
+        # Шууд бичлэгийг дахин бичих боломжгүй: хурлын хуудсанд "Багц сунгаад дахин боловсруулах" төлөв үлдээнэ
+        if processing.is_live_recording(meeting_id):
+            await asyncio.to_thread(meeting_store.finish_processing, meeting_id, e.detail)
         raise HTTPException(status_code=402, detail=e.detail) from e
     if not meeting_store.try_begin_processing(meeting_id):
         if usage_id and not jobs.has_active(meeting_id):

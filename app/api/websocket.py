@@ -25,6 +25,8 @@ _active_connections: Dict[str, Set[WebSocket]] = {}
 # Нэг дор ирэх sequence-ийн дээд үсрэлт (дахин холболтын дараа resend хийхэд хангалттай)
 MAX_SEQUENCE_JUMP = 1000
 MAX_SEQUENCE = 200_000
+MINUTES_LOW_WARNING_MS = 5 * 60_000  # үлдэгдэл ийм хэмжээнд хүрэхэд "минут дуусах гэж байна" анхааруулна
+LIVE_CHUNK_MS = 3000  # клиентийн MediaRecorder-ийн хэсгийн урт (use-audio-capture.ts CHUNK_DURATION_MS)
 
 
 async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
@@ -78,7 +80,7 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
         await websocket.close(code=4413)
         return
 
-    # Минут дууссан бол ШИНЭ бичлэг эхлэхгүй (enforce). Аль хэдийн хэсэг ирсэн бичлэгийн дахин холболтыг хэзээ ч хаахгүй.
+    # Минут дууссан бол ШИНЭ бичлэг эхлэхгүй (enforce). Эхэлсэн бичлэгийн дахин холболтыг энд хаахгүй — доорх limit_ms шалгана.
     if billing.enforcing() and not processing.has_audio(meeting_id):
         try:
             await asyncio.to_thread(billing.check_can_start_recording, meeting_id, user.id)
@@ -86,6 +88,13 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
             await _send_error(websocket, e.code, e.message)
             await websocket.close(code=4402)
             return
+    # Минутын үлдэгдэл (мс). Бичлэг хэзээ ч тасрахгүй: үлдэгдэлд хүрмэгц зөвхөн шууд бичвэр зогсоно, дуусгахад
+    # багц сунгах шаардлагатай (billing._reserve). None = хязгааргүй.
+    try:
+        limit_ms = await asyncio.to_thread(billing.recording_limit_ms, meeting_id)
+    except Exception:  # noqa: BLE001 — billing-ийн алдаа бичлэгт саад болохгүй
+        logger.exception("recording limit lookup failed for meeting %s", meeting_id)
+        limit_ms = None
 
     _active_connections.setdefault(meeting_id, set()).add(websocket)
     pending_meta: Optional[dict] = None
@@ -100,12 +109,19 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
         async with send_lock:
             await websocket.send_json(msg)
 
+    # Дахин холболт: өмнө нь бичигдсэн хэсгийн тоогоор уртыг тооцно
+    recorded_before_ms = sum(1 for p in processing.meeting_dir(meeting_id).glob("[0-9]*")) * LIVE_CHUNK_MS         if processing.meeting_dir(meeting_id).is_dir() else 0
+    minutes_low_sent = False
+    minutes_exhausted = limit_ms is not None and recorded_before_ms > limit_ms
+
     live = None
-    if meeting.status in ("recording", "paused"):
+    if meeting.status in ("recording", "paused") and not minutes_exhausted:
         live = live_transcriber.get_or_create(meeting_id, processing.meeting_dir(meeting_id))
 
     try:
         await send(WSRecordingReady(meeting_id=meeting_id).model_dump())
+        if minutes_exhausted:
+            await send({"type": "minutes.exhausted", "meeting_id": meeting_id})
         if live is not None:
             # Дахин холбогдсон бол өмнө гарсан бичвэрийг бүгдийг нь дахин илгээнэ (клиент id-аар давхардлыг арилгана)
             for seg in list(live.segments):
@@ -152,6 +168,20 @@ async def audio_websocket(websocket: WebSocket, meeting_id: str):
                     await send(WSError(code="RECORDING_TOO_LONG", message=f"Бичлэг хэт урт байна (дээд хугацаа {settings.max_recording_sec // 3600} цаг)").model_dump())
                     await websocket.close(code=4413)
                     break
+                # Хэсгийн цаг (түр зогсоолт ороогүй) эсвэл хэсгийн тоогоор бичигдсэн уртыг тооцно
+                recorded_ms = max(ts, seq * LIVE_CHUNK_MS)
+                if limit_ms is not None and not minutes_exhausted:
+                    if recorded_ms > limit_ms:
+                        # Бичлэг үргэлжилнэ; зөвхөн шууд бичвэрийг (ASR зардал) зогсооно
+                        minutes_exhausted = True
+                        if live is not None:
+                            live.listeners.discard(send)
+                            live = None
+                        await live_transcriber.stop(meeting_id)
+                        await send({"type": "minutes.exhausted", "meeting_id": meeting_id})
+                    elif not minutes_low_sent and recorded_ms >= limit_ms - MINUTES_LOW_WARNING_MS:
+                        minutes_low_sent = True
+                        await send({"type": "minutes.low", "meeting_id": meeting_id, "remaining_ms": limit_ms - recorded_ms})
                 if pending_meta is not None:
                     # Өмнөх meta-гийн аудио ирээгүй — тэр хэсгийг алгасаж, клиент ack авахгүй тул дахин илгээнэ
                     logger.warning("meeting %s: chunk %s had no audio payload", meeting_id, pending_meta["sequence"])
